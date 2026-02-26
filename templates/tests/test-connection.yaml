@@ -1,0 +1,32 @@
+{{- if .Values.test.enabled }}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "cloud-price-exporter.fullname" . }}-test-connection"
+  labels:
+    {{- include "cloud-price-exporter.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-weight": "0"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  containers:
+    - name: test-connection
+      image: "{{ .Values.test.image.repository }}:{{ .Values.test.image.tag }}"
+      command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Testing root endpoint..."
+          wget --spider --timeout=5 http://{{ include "cloud-price-exporter.fullname" . }}:{{ .Values.service.port }}/
+          echo "Testing /metrics endpoint..."
+          wget --spider --timeout=5 http://{{ include "cloud-price-exporter.fullname" . }}:{{ .Values.service.port }}/metrics
+      securityContext:
+        readOnlyRootFilesystem: true
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: ["ALL"]
+  restartPolicy: Never
+{{- end }}

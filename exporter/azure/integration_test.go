@@ -1,6 +1,6 @@
 //go:build integration
 
-package exporter
+package azure
 
 import (
 	"context"
@@ -9,8 +9,8 @@ import (
 )
 
 func TestIntegration_AzureVMPricing(t *testing.T) {
-	factory := &DefaultAzureClientFactory{}
-	client := factory.NewAzureRetailPricesClient()
+	factory := NewDefaultClientFactory()
+	client := factory.NewRetailPricesClient()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

@@ -1,33 +1,38 @@
-package exporter
+package azure
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"sync/atomic"
 
 	log "github.com/sirupsen/logrus"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
-func (e *Exporter) getAzureOnDemandPricing(ctx context.Context, region string, client AzureRetailPricesClient, scrapes chan<- scrapeResult) {
-	items, err := client.GetVMPrices(ctx, region, e.azureOperatingSystems)
+// GetOnDemandPricing fetches Azure VM on-demand prices for a single region
+// and sends results to the scrapes channel.
+func GetOnDemandPricing(ctx context.Context, region string, client RetailPricesClient, operatingSystems []string, instanceRegexes []*regexp.Regexp, errorCount *uint64, scrapes chan<- provider.ScrapeResult) {
+	items, err := client.GetVMPrices(ctx, region, operatingSystems)
 	if err != nil {
 		log.WithError(err).Errorf("error while fetching Azure VM prices [region=%s]", region)
-		atomic.AddUint64(&e.errorCount, 1)
+		atomic.AddUint64(errorCount, 1)
 		return
 	}
 
 	for _, item := range items {
-		if len(e.azureInstanceRegexes) > 0 && !isMatchAny(e.azureInstanceRegexes, item.ArmSkuName) {
+		if len(instanceRegexes) > 0 && !provider.IsMatchAny(instanceRegexes, item.ArmSkuName) {
 			log.Debugf("Skipping Azure instance type: %s", item.ArmSkuName)
 			continue
 		}
 
 		os := classifyAzureOS(item.ProductName)
-		if !contains(e.azureOperatingSystems, os) {
+		if !provider.Contains(operatingSystems, os) {
 			continue
 		}
 
-		scrapes <- scrapeResult{
+		scrapes <- provider.ScrapeResult{
 			Name:              "azure_vm",
 			Value:             item.RetailPrice,
 			Region:            region,

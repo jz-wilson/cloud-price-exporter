@@ -1,4 +1,4 @@
-package exporter
+package aws
 
 import (
 	"context"
@@ -6,14 +6,16 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
 func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savingsplansTypes.SavingsPlanOfferingRate {
 	return savingsplansTypes.SavingsPlanOfferingRate{
-		Rate: aws.String(rate),
+		Rate: awssdk.String(rate),
 		SavingsPlanOffering: &savingsplansTypes.ParentSavingsPlanOffering{
 			PaymentOption:   savingsplansTypes.SavingsPlanPaymentOptionNoUpfront,
 			DurationSeconds: durationSeconds,
@@ -21,16 +23,16 @@ func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savin
 		},
 		Properties: []savingsplansTypes.SavingsPlanOfferingRateProperty{
 			{
-				Name:  aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceType)),
-				Value: aws.String(instanceType),
+				Name:  awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceType)),
+				Value: awssdk.String(instanceType),
 			},
 			{
-				Name:  aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyRegion)),
-				Value: aws.String("us-east-1"),
+				Name:  awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyRegion)),
+				Value: awssdk.String("us-east-1"),
 			},
 			{
-				Name:  aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyProductDescription)),
-				Value: aws.String("Linux/UNIX"),
+				Name:  awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyProductDescription)),
+				Value: awssdk.String("Linux/UNIX"),
 			},
 		},
 	}
@@ -49,16 +51,14 @@ func TestGetSavingPlanPricing_NilNextToken(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.savingPlanTypes = []string{"Compute"}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSavingPlanPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSavingPlanPricing(context.Background(), "us-east-1", client, []string{"Compute"}, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -82,7 +82,7 @@ func TestGetSavingPlanPricing_MultiplePages(t *testing.T) {
 					SearchResults: []savingsplansTypes.SavingsPlanOfferingRate{
 						makeSavingsPlanRate("m5.large", "0.04", 31536000),
 					},
-					NextToken: aws.String("page2"),
+					NextToken: awssdk.String("page2"),
 				}, nil
 			}
 			return &savingsplans.DescribeSavingsPlansOfferingRatesOutput{
@@ -94,16 +94,14 @@ func TestGetSavingPlanPricing_MultiplePages(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.savingPlanTypes = []string{"Compute"}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSavingPlanPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSavingPlanPricing(context.Background(), "us-east-1", client, []string{"Compute"}, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -124,16 +122,14 @@ func TestGetSavingPlanPricing_APIError(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.savingPlanTypes = []string{"Compute"}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSavingPlanPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSavingPlanPricing(context.Background(), "us-east-1", client, []string{"Compute"}, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -141,8 +137,8 @@ func TestGetSavingPlanPricing_APIError(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("expected 0 results on error, got %d", len(results))
 	}
-	if e.errorCount != 1 {
-		t.Errorf("expected errorCount=1, got %d", e.errorCount)
+	if errorCount != 1 {
+		t.Errorf("expected errorCount=1, got %d", errorCount)
 	}
 }
 
@@ -161,11 +157,11 @@ func TestConvertSavingsPlanType(t *testing.T) {
 
 func TestConvertPropertiesToStruct_AllProperties(t *testing.T) {
 	props := []savingsplansTypes.SavingsPlanOfferingRateProperty{
-		{Name: aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyRegion)), Value: aws.String("us-east-1")},
-		{Name: aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceType)), Value: aws.String("m5.large")},
-		{Name: aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceFamily)), Value: aws.String("m5")},
-		{Name: aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyProductDescription)), Value: aws.String("Linux/UNIX")},
-		{Name: aws.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyTenancy)), Value: aws.String("shared")},
+		{Name: awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyRegion)), Value: awssdk.String("us-east-1")},
+		{Name: awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceType)), Value: awssdk.String("m5.large")},
+		{Name: awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceFamily)), Value: awssdk.String("m5")},
+		{Name: awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyProductDescription)), Value: awssdk.String("Linux/UNIX")},
+		{Name: awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyTenancy)), Value: awssdk.String("shared")},
 	}
 
 	result := convertPropertiesToStruct(props)
@@ -188,8 +184,8 @@ func TestConvertPropertiesToStruct_AllProperties(t *testing.T) {
 
 func TestConvertPropertiesToStruct_NilValues(t *testing.T) {
 	props := []savingsplansTypes.SavingsPlanOfferingRateProperty{
-		{Name: nil, Value: aws.String("value")},
-		{Name: aws.String("key"), Value: nil},
+		{Name: nil, Value: awssdk.String("value")},
+		{Name: awssdk.String("key"), Value: nil},
 	}
 	result := convertPropertiesToStruct(props)
 	// Should not panic; all fields empty

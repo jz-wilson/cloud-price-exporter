@@ -1,4 +1,4 @@
-package exporter
+package azure
 
 import (
 	"context"
@@ -10,19 +10,19 @@ import (
 )
 
 func TestHTTPClient_SinglePage(t *testing.T) {
-	resp := AzureRetailPriceResponse{
-		Items: []AzureRetailPriceItem{
+	resp := RetailPriceResponse{
+		Items: []RetailPriceItem{
 			{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D2s v5", UnitOfMeasure: "1 Hour", ServiceName: "Virtual Machines", IsPrimaryMeterRegion: true},
 		},
 		Count: 1,
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
-	client := &HTTPAzureRetailPricesClient{
+	client := &HTTPRetailPricesClient{
 		client:     srv.Client(),
 		baseURL:    srv.URL,
 		retryDelay: time.Millisecond,
@@ -46,27 +46,27 @@ func TestHTTPClient_Pagination(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
 		if callCount == 1 {
-			resp := AzureRetailPriceResponse{
-				Items: []AzureRetailPriceItem{
+			resp := RetailPriceResponse{
+				Items: []RetailPriceItem{
 					{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5", UnitOfMeasure: "1 Hour"},
 				},
 				NextPageLink: "http://" + r.Host + "/page2",
 				Count:        1,
 			}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		} else {
-			resp := AzureRetailPriceResponse{
-				Items: []AzureRetailPriceItem{
+			resp := RetailPriceResponse{
+				Items: []RetailPriceItem{
 					{RetailPrice: 0.192, ArmSkuName: "Standard_D4s_v5", MeterName: "D4s v5", UnitOfMeasure: "1 Hour"},
 				},
 				Count: 1,
 			}
-			json.NewEncoder(w).Encode(resp)
+			_ = json.NewEncoder(w).Encode(resp)
 		}
 	}))
 	defer srv.Close()
 
-	client := &HTTPAzureRetailPricesClient{
+	client := &HTTPRetailPricesClient{
 		client:     srv.Client(),
 		baseURL:    srv.URL,
 		retryDelay: time.Millisecond,
@@ -90,7 +90,7 @@ func TestHTTPClient_ServerError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := &HTTPAzureRetailPricesClient{
+	client := &HTTPRetailPricesClient{
 		client:     srv.Client(),
 		baseURL:    srv.URL,
 		retryDelay: time.Millisecond,
@@ -103,8 +103,8 @@ func TestHTTPClient_ServerError(t *testing.T) {
 }
 
 func TestHTTPClient_FiltersSpotAndLowPriority(t *testing.T) {
-	resp := AzureRetailPriceResponse{
-		Items: []AzureRetailPriceItem{
+	resp := RetailPriceResponse{
+		Items: []RetailPriceItem{
 			{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5", UnitOfMeasure: "1 Hour"},
 			{RetailPrice: 0.020, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5 Spot", UnitOfMeasure: "1 Hour"},
 			{RetailPrice: 0.030, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5 Low Priority", UnitOfMeasure: "1 Hour"},
@@ -113,11 +113,11 @@ func TestHTTPClient_FiltersSpotAndLowPriority(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
-	client := &HTTPAzureRetailPricesClient{
+	client := &HTTPRetailPricesClient{
 		client:     srv.Client(),
 		baseURL:    srv.URL,
 		retryDelay: time.Millisecond,
@@ -136,8 +136,8 @@ func TestHTTPClient_FiltersSpotAndLowPriority(t *testing.T) {
 }
 
 func TestHTTPClient_FiltersNonHourly(t *testing.T) {
-	resp := AzureRetailPriceResponse{
-		Items: []AzureRetailPriceItem{
+	resp := RetailPriceResponse{
+		Items: []RetailPriceItem{
 			{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5", UnitOfMeasure: "1 Hour"},
 			{RetailPrice: 70.08, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5", UnitOfMeasure: "1 Month"},
 		},
@@ -145,11 +145,11 @@ func TestHTTPClient_FiltersNonHourly(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer srv.Close()
 
-	client := &HTTPAzureRetailPricesClient{
+	client := &HTTPRetailPricesClient{
 		client:     srv.Client(),
 		baseURL:    srv.URL,
 		retryDelay: time.Millisecond,

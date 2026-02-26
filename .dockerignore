@@ -7,3 +7,5 @@ templates/
 values.yaml
 Chart.yaml
 *_test.go
+Makefile
+.golangci.yml

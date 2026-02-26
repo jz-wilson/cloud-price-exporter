@@ -13,13 +13,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/pixelfederation/cloud-price-exporter/exporter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter"
+	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
+	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
 )
 
 var (
@@ -28,8 +31,8 @@ var (
 	rawLevel            = flag.String("log-level", "info", "log level")
 	productDescriptions = flag.String("product-descriptions", "Linux/UNIX", "Comma separated list of product descriptions, used to filter spot instances. Accepted values: Linux/UNIX, SUSE Linux, Windows, Linux/UNIX (Amazon VPC), SUSE Linux (Amazon VPC), Windows (Amazon VPC)")
 	operatingSystems    = flag.String("operating-systems", "Linux", "Comma separated list of operating systems, used to filter ondemand instances. Accepted values: Linux, RHEL, SUSE, Windows")
-	cache           = flag.Int("cache", 0, "How long should the results be cached, in seconds (defaults to *0*)")
-	instanceRegexes = flag.String("instance-regexes", "", "Comma separated list of instance types regexes (defaults to *all*)")
+	cache               = flag.Int("cache", 0, "How long should the results be cached, in seconds (defaults to *0*)")
+	instanceRegexes     = flag.String("instance-regexes", "", "Comma separated list of instance types regexes (defaults to *all*)")
 
 	// AWS flags
 	awsEnabled      = flag.Bool("aws-enabled", true, "Enable AWS EC2 pricing")
@@ -67,14 +70,16 @@ func main() {
 
 	if *awsEnabled {
 		if len(*regions) == 0 {
-			cfg, err := config.LoadDefaultConfig(context.TODO())
+			var cfg awssdk.Config
+			cfg, err = config.LoadDefaultConfig(context.TODO())
 			if err != nil {
 				log.WithError(err).Errorf("error while initializing aws client to list available regions")
 				return
 			}
 
 			ec2Svc := ec2.NewFromConfig(cfg)
-			r, err := ec2Svc.DescribeRegions(context.TODO(), &ec2.DescribeRegionsInput{AllRegions: aws.Bool(false)})
+			var r *ec2.DescribeRegionsOutput
+			r, err = ec2Svc.DescribeRegions(context.TODO(), &ec2.DescribeRegionsInput{AllRegions: awssdk.Bool(false)})
 			if err != nil {
 				log.Fatal(err)
 				return
@@ -95,13 +100,16 @@ func main() {
 		}
 		spt = splitAndTrim(*savingPlanTypes)
 
-		if err := validateProductDesc(pds); err != nil {
+		err = validateProductDesc(pds)
+		if err != nil {
 			log.Fatal(err)
 		}
-		if err := validateOperatingSystems(oss); err != nil {
+		err = validateOperatingSystems(oss)
+		if err != nil {
 			log.Fatal(err)
 		}
-		if err := validateSavingPlanTypes(spt); err != nil {
+		err = validateSavingPlanTypes(spt)
+		if err != nil {
 			log.Fatal(err)
 		}
 	}
@@ -111,11 +119,10 @@ func main() {
 		instReg = []string{".*"}
 	}
 
-	if compiled, err := compileRegexes(instReg); err != nil {
+	instRegCompiled, err = compileRegexes(instReg)
+	if err != nil {
 		fmt.Printf("Error: %s\n", err)
 		return
-	} else {
-		instRegCompiled = compiled
 	}
 
 	// --- Azure setup ---
@@ -133,7 +140,8 @@ func main() {
 			if len(azureInstReg) == 0 {
 				azureInstReg = []string{".*"}
 			}
-			azureInstRegCompiled, err := compileRegexes(azureInstReg)
+			var azureInstRegCompiled []*regexp.Regexp
+			azureInstRegCompiled, err = compileRegexes(azureInstReg)
 			if err != nil {
 				log.Fatalf("invalid azure instance regex: %v", err)
 			}
@@ -141,12 +149,12 @@ func main() {
 				Regions:          azureReg,
 				OperatingSystems: azureOSS,
 				InstanceRegexes:  azureInstRegCompiled,
-				ClientFactory:    exporter.NewDefaultAzureClientFactory(),
+				ClientFactory:    azure.NewDefaultClientFactory(),
 			}
 		}
 	}
 
-	exp, err := exporter.NewExporter(pds, oss, reg, lc, *cache, instRegCompiled, spt, &exporter.AWSClientFactory{}, azureCfg)
+	exp, err := exporter.NewExporter(pds, oss, reg, lc, *cache, instRegCompiled, spt, &aws.SDKClientFactory{}, azureCfg)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -169,7 +177,9 @@ func main() {
 		log.Infof("Received %s, shutting down...", sig)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		srv.Shutdown(ctx)
+		if err := srv.Shutdown(ctx); err != nil {
+			log.WithError(err).Error("error during server shutdown")
+		}
 	}()
 
 	log.Infof("Starting metric http endpoint [address=%s, path=%s]", *addr, *metricsPath)
