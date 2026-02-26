@@ -34,7 +34,8 @@ exporter:
   # Azure VM on-demand pricing configuration
   azure:
     # Enable Azure VM pricing (no auth required)
-    enabled: true
+    # Set to true and provide regions to enable
+    enabled: false
     # Comma-separated Azure regions (required when enabled)
     regions: ""
     # Comma-separated OS types: Linux, Windows
@@ -67,6 +68,7 @@ readinessProbe:
   initialDelaySeconds: 10
   periodSeconds: 10
   timeoutSeconds: 5
+  failureThreshold: 3
 
 service:
   type: ClusterIP

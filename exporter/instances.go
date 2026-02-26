@@ -24,20 +24,28 @@ const (
 	cpuMemRelation = 7.2
 )
 
-func (e *Exporter) getInstances(client ec2.DescribeInstanceTypesAPIClient) error {
+func (e *Exporter) getInstances(ctx context.Context, client ec2.DescribeInstanceTypesAPIClient) error {
 	e.instances = make(map[string]Instance)
 	pag := ec2.NewDescribeInstanceTypesPaginator(
 		client,
 		&ec2.DescribeInstanceTypesInput{})
 	for pag.HasMorePages() {
-		instances, err := pag.NextPage(context.TODO())
+		instances, err := pag.NextPage(ctx)
 		if err != nil {
 			return fmt.Errorf("error fetching available instance types: %w", err)
 		}
 		for _, instance := range instances.InstanceTypes {
+			var memMiB int64
+			if instance.MemoryInfo != nil {
+				memMiB = aws.ToInt64(instance.MemoryInfo.SizeInMiB)
+			}
+			var vcpus int32
+			if instance.VCpuInfo != nil {
+				vcpus = aws.ToInt32(instance.VCpuInfo.DefaultVCpus)
+			}
 			e.instances[string(instance.InstanceType)] = Instance{
-				Memory: aws.ToInt64(instance.MemoryInfo.SizeInMiB),
-				VCpu:   aws.ToInt32(instance.VCpuInfo.DefaultVCpus),
+				Memory: memMiB,
+				VCpu:   vcpus,
 			}
 		}
 	}

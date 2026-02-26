@@ -141,7 +141,7 @@ func main() {
 				Regions:          azureReg,
 				OperatingSystems: azureOSS,
 				InstanceRegexes:  azureInstRegCompiled,
-				ClientFactory:    &exporter.DefaultAzureClientFactory{},
+				ClientFactory:    exporter.NewDefaultAzureClientFactory(),
 			}
 		}
 	}

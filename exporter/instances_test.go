@@ -32,7 +32,7 @@ func TestGetInstances_Success(t *testing.T) {
 	}
 
 	e := &Exporter{}
-	err := e.getInstances(client)
+	err := e.getInstances(context.Background(), client)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestGetInstances_APIError(t *testing.T) {
 	}
 
 	e := &Exporter{}
-	err := e.getInstances(client)
+	err := e.getInstances(context.Background(), client)
 	if err == nil {
 		t.Fatal("expected error from getInstances, got nil")
 	}

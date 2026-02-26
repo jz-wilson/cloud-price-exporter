@@ -70,6 +70,10 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 			continue
 		}
 
+		if plan.Rate == nil {
+			log.Warnf("nil Rate for saving plan [region=%s, type=%s], skipping", region, planProperties.InstanceType)
+			continue
+		}
 		value, err := strconv.ParseFloat(*plan.Rate, 64)
 		if err != nil {
 			log.WithError(err).Errorf("error while parsing saving plan price value from API response [region=%s, type=%s]", region, planProperties.InstanceType)

@@ -28,7 +28,7 @@ func (e *Exporter) getOnDemandPricing(ctx context.Context, region string, ec2Cli
 		return
 	}
 
-	pricelists := make([]pricing.GetProductsOutput, 0)
+	var outs []Pricing
 	for _, os := range e.operatingSystems {
 		pag := pricing.NewGetProductsPaginator(
 			pricingClient,
@@ -66,28 +66,21 @@ func (e *Exporter) getOnDemandPricing(ctx context.Context, region string, ec2Cli
 		)
 		for pag.HasMorePages() {
 			pricelist, err := pag.NextPage(ctx)
-
 			if err != nil {
 				log.WithError(err).Errorf("error while fetching ondemand price [region=%s]", region)
 				atomic.AddUint64(&e.errorCount, 1)
-				break // Bug #2 fix: don't dereference nil pricelist
+				break
 			}
-
-			pricelists = append(pricelists, *pricelist)
-		}
-	}
-
-	outs := make([]Pricing, 0)
-	for _, pricelist := range pricelists {
-		for _, price := range pricelist.PriceList {
-			var tmp Pricing
-			log.Debug(price)
-			if err := json.Unmarshal([]byte(price), &tmp); err != nil {
-				log.WithError(err).Errorf("failed to unmarshal pricing item [region=%s]", region)
-				atomic.AddUint64(&e.errorCount, 1)
-				continue
+			for _, price := range pricelist.PriceList {
+				var tmp Pricing
+				log.Debug(price)
+				if err := json.Unmarshal([]byte(price), &tmp); err != nil {
+					log.WithError(err).Errorf("failed to unmarshal pricing item [region=%s]", region)
+					atomic.AddUint64(&e.errorCount, 1)
+					continue
+				}
+				outs = append(outs, tmp)
 			}
-			outs = append(outs, tmp)
 		}
 	}
 
@@ -101,8 +94,19 @@ func (e *Exporter) getOnDemandPricing(ctx context.Context, region string, ec2Cli
 		skuOnDemand := fmt.Sprintf("%s.%s", sku, TermOnDemand)
 		skuOnDemandPerHour := fmt.Sprintf("%s.%s", skuOnDemand, TermPerHour)
 
-		value, err := strconv.ParseFloat(out.Terms.OnDemand[skuOnDemand].PriceDimensions[skuOnDemandPerHour].PricePerUnit["USD"], 64)
-
+		skuEntry, ok := out.Terms.OnDemand[skuOnDemand]
+		if !ok {
+			continue
+		}
+		dimEntry, ok := skuEntry.PriceDimensions[skuOnDemandPerHour]
+		if !ok {
+			continue
+		}
+		usdPrice, ok := dimEntry.PricePerUnit["USD"]
+		if !ok {
+			continue
+		}
+		value, err := strconv.ParseFloat(usdPrice, 64)
 		if err != nil {
 			log.WithError(err).Errorf("error while parsing ondemand price value from API response [region=%s, type=%s]", region, out.Product.Attributes["instanceType"])
 			atomic.AddUint64(&e.errorCount, 1)

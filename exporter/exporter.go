@@ -43,8 +43,7 @@ type Exporter struct {
 	cache               int
 	nextScrape          time.Time
 	errorCount          uint64
-	metricsMtx sync.RWMutex
-	mu         sync.RWMutex
+	mu sync.Mutex
 
 	// Azure fields
 	azureEnabled          bool
@@ -117,7 +116,7 @@ func NewExporter(pds []string, oss []string, regions []string, lifecycle []strin
 		if err != nil {
 			return nil, fmt.Errorf("failed to create EC2 client: %w", err)
 		}
-		if err := e.getInstances(ec2Client); err != nil {
+		if err := e.getInstances(context.Background(), ec2Client); err != nil {
 			return nil, err
 		}
 	}
@@ -174,25 +173,21 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 // Collect fetches info from the AWS API
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
-	now := time.Now()
+	e.mu.Lock()
+	if time.Now().After(e.nextScrape) {
+		// Set nextScrape immediately to prevent concurrent scrapes from entering
+		e.nextScrape = time.Now().Add(time.Second * time.Duration(e.cache))
 
-	if now.After(e.nextScrape) {
 		pricingScrapes := make(chan scrapeResult)
 
-		e.mu.Lock()
-		defer e.mu.Unlock()
-
-		// Timeout bounds individual API calls within scrape goroutines, not overall scrape duration.
-		// setPricingMetrics blocks until the channel drains, so cancel fires after scrapes complete.
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
 
 		e.resetGauges()
 		go e.scrape(ctx, pricingScrapes)
 		e.setPricingMetrics(pricingScrapes)
-
-		e.nextScrape = time.Now().Add(time.Second * time.Duration(e.cache))
 	}
+	e.mu.Unlock()
 
 	e.duration.Collect(ch)
 	e.totalScrapes.Collect(ch)
@@ -276,24 +271,8 @@ func (e *Exporter) setPricingMetrics(scrapes <-chan scrapeResult) {
 	for scr := range scrapes {
 		name := scr.Name
 		if _, ok := e.pricingMetrics[name]; !ok {
-			e.metricsMtx.Lock()
-			if name == "ec2" {
-				e.pricingMetrics[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-					Namespace: "aws_pricing",
-					Name:      name,
-				}, []string{"instance_lifecycle", "instance_type", "region", "availability_zone", "product_description", "operating_system", "memory", "vcpu"})
-			} else if name == "ec2_memory" || name == "ec2_vcpu" {
-				e.pricingMetrics[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-					Namespace: "aws_pricing",
-					Name:      name,
-				}, []string{"instance_lifecycle", "instance_type", "region", "availability_zone"})
-			} else if name == "azure_vm" {
-				e.pricingMetrics[name] = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-					Namespace: "azure_pricing",
-					Name:      "vm",
-				}, []string{"instance_lifecycle", "instance_type", "region", "operating_system"})
-			}
-			e.metricsMtx.Unlock()
+			log.Warnf("setPricingMetrics: unknown metric name %q, dropping", name)
+			continue
 		}
 		var labels prometheus.Labels
 		if name == "ec2" {
