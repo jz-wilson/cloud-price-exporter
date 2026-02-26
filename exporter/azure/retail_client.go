@@ -1,4 +1,4 @@
-package exporter
+package azure
 
 import (
 	"context"
@@ -12,16 +12,16 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-const azureRetailPricesBaseURL = "https://prices.azure.com/api/retail/prices"
+const retailPricesBaseURL = "https://prices.azure.com/api/retail/prices"
 
-// DefaultAzureClientFactory creates production Azure API clients.
+// DefaultClientFactory creates production Azure API clients.
 // A single shared HTTP client is reused across all regions for connection pooling.
-type DefaultAzureClientFactory struct {
+type DefaultClientFactory struct {
 	client *http.Client
 }
 
-func NewDefaultAzureClientFactory() *DefaultAzureClientFactory {
-	return &DefaultAzureClientFactory{
+func NewDefaultClientFactory() *DefaultClientFactory {
+	return &DefaultClientFactory{
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -33,22 +33,22 @@ func NewDefaultAzureClientFactory() *DefaultAzureClientFactory {
 	}
 }
 
-func (f *DefaultAzureClientFactory) NewAzureRetailPricesClient() AzureRetailPricesClient {
-	return &HTTPAzureRetailPricesClient{
+func (f *DefaultClientFactory) NewRetailPricesClient() RetailPricesClient {
+	return &HTTPRetailPricesClient{
 		client:     f.client,
-		baseURL:    azureRetailPricesBaseURL,
+		baseURL:    retailPricesBaseURL,
 		retryDelay: time.Second,
 	}
 }
 
-// HTTPAzureRetailPricesClient calls the Azure Retail Prices REST API over HTTP.
-type HTTPAzureRetailPricesClient struct {
+// HTTPRetailPricesClient calls the Azure Retail Prices REST API over HTTP.
+type HTTPRetailPricesClient struct {
 	client     *http.Client
 	baseURL    string        // overridable for tests
 	retryDelay time.Duration // base unit for exponential backoff; defaults to time.Second
 }
 
-func (c *HTTPAzureRetailPricesClient) GetVMPrices(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
+func (c *HTTPRetailPricesClient) GetVMPrices(ctx context.Context, region string, osTypes []string) ([]RetailPriceItem, error) {
 	filter := fmt.Sprintf(
 		"serviceName eq 'Virtual Machines' and priceType eq 'Consumption' and armRegionName eq '%s' and isPrimaryMeterRegion eq true",
 		region,
@@ -56,19 +56,19 @@ func (c *HTTPAzureRetailPricesClient) GetVMPrices(ctx context.Context, region st
 
 	// Apply OS-level filtering at the API to reduce data transfer.
 	// Azure has no explicit "os" field — Windows products contain "Windows" in productName.
-	// Only applied for single-OS configs; multi-OS falls back to client-side filtering in azure_ondemand.go.
+	// Only applied for single-OS configs; multi-OS falls back to client-side filtering in ondemand.go.
 	if len(osTypes) == 1 {
 		switch osTypes[0] {
 		case "Windows":
 			filter += " and contains(productName, 'Windows')"
 		case "Linux":
-			filter += " and not contains(productName, 'Windows')"
+			filter += " and contains(productName, 'Windows') eq false"
 		}
 	}
 
 	nextURL := fmt.Sprintf("%s?$filter=%s", c.baseURL, url.QueryEscape(filter))
 
-	var results []AzureRetailPriceItem
+	var results []RetailPriceItem
 
 	for nextURL != "" {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
@@ -81,8 +81,9 @@ func (c *HTTPAzureRetailPricesClient) GetVMPrices(ctx context.Context, region st
 			return nil, fmt.Errorf("fetching Azure prices: %w", err)
 		}
 
-		var page AzureRetailPriceResponse
-		if err := json.NewDecoder(resp.Body).Decode(&page); err != nil {
+		var page RetailPriceResponse
+		err = json.NewDecoder(resp.Body).Decode(&page)
+		if err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("decoding Azure response: %w", err)
 		}
@@ -119,7 +120,7 @@ func (c *HTTPAzureRetailPricesClient) GetVMPrices(ctx context.Context, region st
 
 const maxRetries = 3
 
-func (c *HTTPAzureRetailPricesClient) doWithRetry(req *http.Request) (*http.Response, error) {
+func (c *HTTPRetailPricesClient) doWithRetry(req *http.Request) (*http.Response, error) {
 	delay := c.retryDelay
 	if delay == 0 {
 		delay = time.Second

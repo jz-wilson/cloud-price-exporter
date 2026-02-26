@@ -1,15 +1,18 @@
-package exporter
+package aws
 
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strconv"
 	"sync/atomic"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
 	log "github.com/sirupsen/logrus"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
 type savingPlanProperties struct {
@@ -20,10 +23,11 @@ type savingPlanProperties struct {
 	Tenancy            string
 }
 
-func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, client SavingsPlansAPI, scrapes chan<- scrapeResult) {
+// GetSavingPlanPricing fetches savings plan prices for a region and sends results to scrapes.
+func GetSavingPlanPricing(ctx context.Context, region string, client SavingsPlansAPI, savingPlanTypes []string, productDescriptions []string, instanceRegexes []*regexp.Regexp, instances *InstanceStore, errorCount *uint64, scrapes chan<- provider.ScrapeResult) {
 	params := &savingsplans.DescribeSavingsPlansOfferingRatesInput{
-		MaxResults:       *aws.Int32((AwsMaxResultsPerPage)),
-		SavingsPlanTypes: convertSavingsPlanType(e.savingPlanTypes),
+		MaxResults:       *awssdk.Int32(MaxResultsPerPage),
+		SavingsPlanTypes: convertSavingsPlanType(savingPlanTypes),
 		ServiceCodes:     []savingsplansTypes.SavingsPlanRateServiceCode{"AmazonEC2"},
 		Filters: []savingsplansTypes.SavingsPlanOfferingRateFilterElement{
 			{
@@ -36,7 +40,7 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 			},
 			{
 				Name:   savingsplansTypes.SavingsPlanRateFilterAttributeProductDescription,
-				Values: e.productDescriptions,
+				Values: productDescriptions,
 			},
 		},
 	}
@@ -48,7 +52,7 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 
 		if err != nil {
 			log.WithError(err).Errorf("error while fetching saving plans [region=%s]", region)
-			atomic.AddUint64(&e.errorCount, 1)
+			atomic.AddUint64(errorCount, 1)
 			break // Bug fix: don't access nil resp fields after error
 		}
 
@@ -65,7 +69,7 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 	for _, plan := range savingPlanList {
 		planProperties := convertPropertiesToStruct(plan.Properties)
 
-		if !isMatchAny(e.instanceRegexes, planProperties.InstanceType) {
+		if !provider.IsMatchAny(instanceRegexes, planProperties.InstanceType) {
 			log.Debugf("Skipping instance type: %s", planProperties.InstanceType)
 			continue
 		}
@@ -77,7 +81,7 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 		value, err := strconv.ParseFloat(*plan.Rate, 64)
 		if err != nil {
 			log.WithError(err).Errorf("error while parsing saving plan price value from API response [region=%s, type=%s]", region, planProperties.InstanceType)
-			atomic.AddUint64(&e.errorCount, 1)
+			atomic.AddUint64(errorCount, 1)
 			continue
 		}
 		log.Debugf("Creating new metric: ec2{region=%s, instance_type=%s, product_description=%s} = %v.", region, planProperties.InstanceType, planProperties.ProductDescription, value)
@@ -85,12 +89,12 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 		years, err := SecondsToYears(plan.SavingsPlanOffering.DurationSeconds)
 		if err != nil {
 			log.WithError(err).Errorf("error converting duration [region=%s, type=%s]", region, planProperties.InstanceType)
-			atomic.AddUint64(&e.errorCount, 1)
+			atomic.AddUint64(errorCount, 1)
 			continue
 		}
 
-		vcpu, memory := e.getNormalizedCost(value, planProperties.InstanceType)
-		scrapes <- scrapeResult{
+		vcpu, memory := instances.GetNormalizedCost(value, planProperties.InstanceType)
+		scrapes <- provider.ScrapeResult{
 			Name:               "ec2",
 			Value:              value,
 			Region:             region,
@@ -100,10 +104,10 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 			SavingPlanOption:   string(plan.SavingsPlanOffering.PaymentOption),
 			SavingPlanDuration: years,
 			SavingPlanType:     string(plan.SavingsPlanOffering.PlanType),
-			Memory:             e.getInstanceMemory(planProperties.InstanceType),
-			VCpu:               e.getInstanceVCpu(planProperties.InstanceType),
+			Memory:             instances.GetMemory(planProperties.InstanceType),
+			VCpu:               instances.GetVCpu(planProperties.InstanceType),
 		}
-		scrapes <- scrapeResult{
+		scrapes <- provider.ScrapeResult{
 			Name:               "ec2_memory",
 			Value:              memory,
 			Region:             region,
@@ -113,7 +117,7 @@ func (e *Exporter) getSavingPlanPricing(ctx context.Context, region string, clie
 			SavingPlanDuration: years,
 			SavingPlanType:     string(plan.SavingsPlanOffering.PlanType),
 		}
-		scrapes <- scrapeResult{
+		scrapes <- provider.ScrapeResult{
 			Name:               "ec2_vcpu",
 			Value:              vcpu,
 			Region:             region,

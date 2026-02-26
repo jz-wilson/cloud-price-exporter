@@ -1,4 +1,4 @@
-package exporter
+package aws
 
 import (
 	"context"
@@ -7,10 +7,12 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
 // makePricingJSON builds a valid pricing JSON string for testing.
@@ -50,8 +52,8 @@ func TestGetOnDemandPricing_SinglePage(t *testing.T) {
 		DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 			return &ec2.DescribeAvailabilityZonesOutput{
 				AvailabilityZones: []ec2types.AvailabilityZone{
-					{ZoneName: aws.String("us-east-1a")},
-					{ZoneName: aws.String("us-east-1b")},
+					{ZoneName: awssdk.String("us-east-1a")},
+					{ZoneName: awssdk.String("us-east-1b")},
 				},
 			}, nil
 		},
@@ -67,16 +69,14 @@ func TestGetOnDemandPricing_SinglePage(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.operatingSystems = []string{"Linux"}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getOnDemandPricing(context.Background(), "us-east-1", ec2Client, pricingClient, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, pricingClient, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -106,7 +106,7 @@ func TestGetOnDemandPricing_APIError(t *testing.T) {
 		DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 			return &ec2.DescribeAvailabilityZonesOutput{
 				AvailabilityZones: []ec2types.AvailabilityZone{
-					{ZoneName: aws.String("us-east-1a")},
+					{ZoneName: awssdk.String("us-east-1a")},
 				},
 			}, nil
 		},
@@ -118,17 +118,14 @@ func TestGetOnDemandPricing_APIError(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.operatingSystems = []string{"Linux"}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	// Bug #2 validation: should not panic on nil pricelist
-	e.getOnDemandPricing(context.Background(), "us-east-1", ec2Client, pricingClient, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, pricingClient, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -143,16 +140,15 @@ func TestGetAZs_Success(t *testing.T) {
 		DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 			return &ec2.DescribeAvailabilityZonesOutput{
 				AvailabilityZones: []ec2types.AvailabilityZone{
-					{ZoneName: aws.String("us-east-1a")},
-					{ZoneName: aws.String("us-east-1b")},
-					{ZoneName: aws.String("us-east-1c")},
+					{ZoneName: awssdk.String("us-east-1a")},
+					{ZoneName: awssdk.String("us-east-1b")},
+					{ZoneName: awssdk.String("us-east-1c")},
 				},
 			}, nil
 		},
 	}
 
-	e := &Exporter{}
-	azs, err := e.getAZs(context.Background(), "us-east-1", client)
+	azs, err := GetAZs(context.Background(), "us-east-1", client)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,9 +167,8 @@ func TestGetAZs_APIError(t *testing.T) {
 		},
 	}
 
-	e := &Exporter{}
-	_, err := e.getAZs(context.Background(), "us-east-1", client)
+	_, err := GetAZs(context.Background(), "us-east-1", client)
 	if err == nil {
-		t.Fatal("expected error from getAZs, got nil")
+		t.Fatal("expected error from GetAZs, got nil")
 	}
 }

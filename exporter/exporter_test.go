@@ -2,13 +2,14 @@ package exporter
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
@@ -16,6 +17,10 @@ import (
 	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
+	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
 func newMockFactoryWithInstances() *mockClientFactory {
@@ -26,8 +31,8 @@ func newMockFactoryWithInstances() *mockClientFactory {
 					InstanceTypes: []ec2types.InstanceTypeInfo{
 						{
 							InstanceType: ec2types.InstanceTypeM5Large,
-							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: aws.Int64(8192)},
-							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: aws.Int32(2)},
+							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
+							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
 						},
 					},
 				}, nil
@@ -37,8 +42,8 @@ func newMockFactoryWithInstances() *mockClientFactory {
 					SpotPriceHistory: []ec2types.SpotPrice{
 						{
 							InstanceType:       ec2types.InstanceTypeM5Large,
-							SpotPrice:          aws.String("0.05"),
-							AvailabilityZone:   aws.String("us-east-1a"),
+							SpotPrice:          awssdk.String("0.05"),
+							AvailabilityZone:   awssdk.String("us-east-1a"),
 							ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 						},
 					},
@@ -47,7 +52,7 @@ func newMockFactoryWithInstances() *mockClientFactory {
 			DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 				return &ec2.DescribeAvailabilityZonesOutput{
 					AvailabilityZones: []ec2types.AvailabilityZone{
-						{ZoneName: aws.String("us-east-1a")},
+						{ZoneName: awssdk.String("us-east-1a")},
 					},
 				}, nil
 			},
@@ -85,8 +90,8 @@ func TestNewExporter_Success(t *testing.T) {
 	if exp == nil {
 		t.Fatal("expected non-nil exporter")
 	}
-	if len(exp.instances) != 1 {
-		t.Errorf("expected 1 instance, got %d", len(exp.instances))
+	if exp.instances.Len() != 1 {
+		t.Errorf("expected 1 instance, got %d", exp.instances.Len())
 	}
 }
 
@@ -163,7 +168,7 @@ func TestDescribe(t *testing.T) {
 	e.Describe(ch)
 	close(ch)
 
-	var descs []*prometheus.Desc
+	descs := make([]*prometheus.Desc, 0, len(ch))
 	for d := range ch {
 		descs = append(descs, d)
 	}
@@ -179,7 +184,7 @@ func TestCollect_CacheHit(t *testing.T) {
 
 	e := newTestExporter(factory, func(e *Exporter) {
 		e.lifecycle = []string{"spot"}
-		e.cache = 3600 // 1 hour cache
+		e.cache = 3600                                  // 1 hour cache
 		e.nextScrape = time.Now().Add(-1 * time.Second) // expired, will trigger scrape
 	})
 
@@ -218,8 +223,8 @@ func TestCollect_CacheExpired(t *testing.T) {
 			SpotPriceHistory: []ec2types.SpotPrice{
 				{
 					InstanceType:       ec2types.InstanceTypeM5Large,
-					SpotPrice:          aws.String("0.05"),
-					AvailabilityZone:   aws.String("us-east-1a"),
+					SpotPrice:          awssdk.String("0.05"),
+					AvailabilityZone:   awssdk.String("us-east-1a"),
 					ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 				},
 			},
@@ -255,8 +260,8 @@ func TestCollect_CacheExpired(t *testing.T) {
 func TestSetPricingMetrics(t *testing.T) {
 	e := newTestExporter(nil)
 
-	scrapes := make(chan scrapeResult, 10)
-	scrapes <- scrapeResult{
+	scrapes := make(chan provider.ScrapeResult, 10)
+	scrapes <- provider.ScrapeResult{
 		Name:              "ec2",
 		Value:             0.05,
 		Region:            "us-east-1",
@@ -266,7 +271,7 @@ func TestSetPricingMetrics(t *testing.T) {
 		Memory:            "8192",
 		VCpu:              "2",
 	}
-	scrapes <- scrapeResult{
+	scrapes <- provider.ScrapeResult{
 		Name:              "ec2_memory",
 		Value:             0.002,
 		Region:            "us-east-1",
@@ -274,7 +279,7 @@ func TestSetPricingMetrics(t *testing.T) {
 		InstanceType:      "m5.large",
 		InstanceLifecycle: "spot",
 	}
-	scrapes <- scrapeResult{
+	scrapes <- provider.ScrapeResult{
 		Name:              "ec2_vcpu",
 		Value:             0.015,
 		Region:            "us-east-1",
@@ -330,13 +335,13 @@ func TestCollectorContract(t *testing.T) {
 }
 
 func TestContains(t *testing.T) {
-	if !contains([]string{"a", "b", "c"}, "b") {
+	if !provider.Contains([]string{"a", "b", "c"}, "b") {
 		t.Error("expected true for 'b' in [a,b,c]")
 	}
-	if contains([]string{"a", "b", "c"}, "d") {
+	if provider.Contains([]string{"a", "b", "c"}, "d") {
 		t.Error("expected false for 'd' in [a,b,c]")
 	}
-	if contains([]string{}, "a") {
+	if provider.Contains([]string{}, "a") {
 		t.Error("expected false for empty slice")
 	}
 }
@@ -347,16 +352,16 @@ func TestIsMatchAny(t *testing.T) {
 		regexp.MustCompile(`^c5\.`),
 	}
 
-	if !isMatchAny(regexes, "m5.large") {
+	if !provider.IsMatchAny(regexes, "m5.large") {
 		t.Error("expected match for m5.large")
 	}
-	if !isMatchAny(regexes, "c5.xlarge") {
+	if !provider.IsMatchAny(regexes, "c5.xlarge") {
 		t.Error("expected match for c5.xlarge")
 	}
-	if isMatchAny(regexes, "r5.large") {
+	if provider.IsMatchAny(regexes, "r5.large") {
 		t.Error("expected no match for r5.large")
 	}
-	if isMatchAny(nil, "anything") {
+	if provider.IsMatchAny(nil, "anything") {
 		t.Error("expected no match for nil regex list")
 	}
 }
@@ -373,7 +378,7 @@ func TestDescribe_WithAzure(t *testing.T) {
 	e.Describe(ch)
 	close(ch)
 
-	var descs []*prometheus.Desc
+	descs := make([]*prometheus.Desc, 0, len(ch))
 	for d := range ch {
 		descs = append(descs, d)
 	}
@@ -386,8 +391,8 @@ func TestDescribe_WithAzure(t *testing.T) {
 
 func TestCollect_AzureOnly(t *testing.T) {
 	azureClient := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]azure.RetailPriceItem, error) {
+			return []azure.RetailPriceItem{
 				{RetailPrice: 0.096, ArmRegionName: "eastus", ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D2s v5"},
 			}, nil
 		},
@@ -422,8 +427,8 @@ func TestCollect_AWSAndAzure(t *testing.T) {
 	awsFactory := newMockFactoryWithInstances()
 
 	azureClient := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]azure.RetailPriceItem, error) {
+			return []azure.RetailPriceItem{
 				{RetailPrice: 0.096, ArmRegionName: "eastus", ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D2s v5"},
 			}, nil
 		},
@@ -485,8 +490,8 @@ func TestCollect_ConcurrentSafety(t *testing.T) {
 func TestSetPricingMetrics_UnknownName(t *testing.T) {
 	e := newTestExporter(nil)
 
-	scrapes := make(chan scrapeResult, 1)
-	scrapes <- scrapeResult{
+	scrapes := make(chan provider.ScrapeResult, 1)
+	scrapes <- provider.ScrapeResult{
 		Name:         "nonexistent",
 		Value:        1.0,
 		Region:       "us-east-1",
@@ -539,7 +544,8 @@ func TestEndToEnd_SpotPricing(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	if err := reg.Register(exp); err != nil {
+	err = reg.Register(exp)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -560,6 +566,63 @@ func TestEndToEnd_SpotPricing(t *testing.T) {
 	}
 }
 
+// makePricingJSON builds a valid pricing JSON string for testing.
+func makePricingJSON(sku, instanceType, os string, priceUSD string) string {
+	p := aws.Pricing{
+		Product: aws.Product{
+			Sku:           sku,
+			ProductFamily: "Compute Instance",
+			Attributes: map[string]string{
+				"instanceType":       instanceType,
+				"operatingSystem":    os,
+				"productDescription": "Linux/UNIX",
+			},
+		},
+		ServiceCode: "AmazonEC2",
+		Terms: aws.Terms{
+			OnDemand: map[string]aws.SKU{
+				fmt.Sprintf("%s.%s", sku, aws.TermOnDemand): {
+					PriceDimensions: map[string]aws.Details{
+						fmt.Sprintf("%s.%s.%s", sku, aws.TermOnDemand, aws.TermPerHour): {
+							Unit: "Hrs",
+							PricePerUnit: map[string]string{
+								"USD": priceUSD,
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	b, _ := json.Marshal(p)
+	return string(b)
+}
+
+func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savingsplansTypes.SavingsPlanOfferingRate {
+	return savingsplansTypes.SavingsPlanOfferingRate{
+		Rate: awssdk.String(rate),
+		SavingsPlanOffering: &savingsplansTypes.ParentSavingsPlanOffering{
+			PaymentOption:   savingsplansTypes.SavingsPlanPaymentOptionNoUpfront,
+			DurationSeconds: durationSeconds,
+			PlanType:        savingsplansTypes.SavingsPlanTypeCompute,
+		},
+		Properties: []savingsplansTypes.SavingsPlanOfferingRateProperty{
+			{
+				Name:  awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyInstanceType)),
+				Value: awssdk.String(instanceType),
+			},
+			{
+				Name:  awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyRegion)),
+				Value: awssdk.String("us-east-1"),
+			},
+			{
+				Name:  awssdk.String(string(savingsplansTypes.SavingsPlanRatePropertyKeyProductDescription)),
+				Value: awssdk.String("Linux/UNIX"),
+			},
+		},
+	}
+}
+
 func TestEndToEnd_OnDemandPricing(t *testing.T) {
 	pricingJSON := makePricingJSON("SKU001", "m5.large", "Linux", "0.096")
 
@@ -570,8 +633,8 @@ func TestEndToEnd_OnDemandPricing(t *testing.T) {
 					InstanceTypes: []ec2types.InstanceTypeInfo{
 						{
 							InstanceType: ec2types.InstanceTypeM5Large,
-							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: aws.Int64(8192)},
-							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: aws.Int32(2)},
+							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
+							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
 						},
 					},
 				}, nil
@@ -579,7 +642,7 @@ func TestEndToEnd_OnDemandPricing(t *testing.T) {
 			DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 				return &ec2.DescribeAvailabilityZonesOutput{
 					AvailabilityZones: []ec2types.AvailabilityZone{
-						{ZoneName: aws.String("us-east-1a")},
+						{ZoneName: awssdk.String("us-east-1a")},
 					},
 				}, nil
 			},
@@ -609,7 +672,8 @@ func TestEndToEnd_OnDemandPricing(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	if err := reg.Register(exp); err != nil {
+	err = reg.Register(exp)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -635,8 +699,8 @@ func TestEndToEnd_SavingsPlanPricing(t *testing.T) {
 					InstanceTypes: []ec2types.InstanceTypeInfo{
 						{
 							InstanceType: ec2types.InstanceTypeM5Large,
-							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: aws.Int64(8192)},
-							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: aws.Int32(2)},
+							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
+							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
 						},
 					},
 				}, nil
@@ -669,7 +733,8 @@ func TestEndToEnd_SavingsPlanPricing(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	if err := reg.Register(exp); err != nil {
+	err = reg.Register(exp)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 
@@ -689,8 +754,8 @@ func TestEndToEnd_SavingsPlanPricing(t *testing.T) {
 
 func TestEndToEnd_AzurePricing(t *testing.T) {
 	azureClient := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]azure.RetailPriceItem, error) {
+			return []azure.RetailPriceItem{
 				{RetailPrice: 0.096, ArmRegionName: "eastus", ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D2s v5"},
 			}, nil
 		},
@@ -720,7 +785,8 @@ func TestEndToEnd_AzurePricing(t *testing.T) {
 	}
 
 	reg := prometheus.NewRegistry()
-	if err := reg.Register(exp); err != nil {
+	err = reg.Register(exp)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 

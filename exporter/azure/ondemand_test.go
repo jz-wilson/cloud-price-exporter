@@ -1,36 +1,32 @@
-package exporter
+package azure
 
 import (
 	"context"
 	"fmt"
 	"regexp"
 	"testing"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
-func TestGetAzureOnDemandPricing_SingleRegion(t *testing.T) {
-	client := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{
+func TestGetOnDemandPricing_SingleRegion(t *testing.T) {
+	client := &mockRetailPricesClient{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]RetailPriceItem, error) {
+			return []RetailPriceItem{
 				{RetailPrice: 0.096, ArmRegionName: "eastus", ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D2s v5"},
 				{RetailPrice: 0.192, ArmRegionName: "eastus", ArmSkuName: "Standard_D4s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D4s v5"},
 			}, nil
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.azureEnabled = true
-		e.azureRegions = []string{"eastus"}
-		e.azureOperatingSystems = []string{"Linux"}
-		e.azureInstanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-	})
-
-	scrapes := make(chan scrapeResult, 10)
+	var errorCount uint64
+	scrapes := make(chan provider.ScrapeResult, 10)
 	go func() {
-		e.getAzureOnDemandPricing(context.Background(), "eastus", client, scrapes)
+		GetOnDemandPricing(context.Background(), "eastus", client, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, &errorCount, scrapes)
 		close(scrapes)
 	}()
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -55,28 +51,21 @@ func TestGetAzureOnDemandPricing_SingleRegion(t *testing.T) {
 	}
 }
 
-func TestGetAzureOnDemandPricing_APIError(t *testing.T) {
-	client := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
+func TestGetOnDemandPricing_APIError(t *testing.T) {
+	client := &mockRetailPricesClient{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]RetailPriceItem, error) {
 			return nil, fmt.Errorf("connection refused")
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.azureEnabled = true
-		e.azureRegions = []string{"eastus"}
-		e.azureOperatingSystems = []string{"Linux"}
-		e.azureInstanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.errorCount = 0
-	})
-
-	scrapes := make(chan scrapeResult, 10)
+	var errorCount uint64
+	scrapes := make(chan provider.ScrapeResult, 10)
 	go func() {
-		e.getAzureOnDemandPricing(context.Background(), "eastus", client, scrapes)
+		GetOnDemandPricing(context.Background(), "eastus", client, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, &errorCount, scrapes)
 		close(scrapes)
 	}()
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -84,34 +73,29 @@ func TestGetAzureOnDemandPricing_APIError(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("expected 0 results on error, got %d", len(results))
 	}
-	if e.errorCount == 0 {
+	if errorCount == 0 {
 		t.Error("expected errorCount to be incremented")
 	}
 }
 
-func TestGetAzureOnDemandPricing_RegexFilter(t *testing.T) {
-	client := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{
+func TestGetOnDemandPricing_RegexFilter(t *testing.T) {
+	client := &mockRetailPricesClient{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]RetailPriceItem, error) {
+			return []RetailPriceItem{
 				{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series"},
 				{RetailPrice: 0.500, ArmSkuName: "Standard_E8s_v5", ProductName: "Virtual Machines Ev5 Series"},
 			}, nil
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.azureEnabled = true
-		e.azureOperatingSystems = []string{"Linux"}
-		e.azureInstanceRegexes = []*regexp.Regexp{regexp.MustCompile(`^Standard_D`)}
-	})
-
-	scrapes := make(chan scrapeResult, 10)
+	var errorCount uint64
+	scrapes := make(chan provider.ScrapeResult, 10)
 	go func() {
-		e.getAzureOnDemandPricing(context.Background(), "eastus", client, scrapes)
+		GetOnDemandPricing(context.Background(), "eastus", client, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(`^Standard_D`)}, &errorCount, scrapes)
 		close(scrapes)
 	}()
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -124,29 +108,24 @@ func TestGetAzureOnDemandPricing_RegexFilter(t *testing.T) {
 	}
 }
 
-func TestGetAzureOnDemandPricing_OSFilter(t *testing.T) {
-	client := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{
+func TestGetOnDemandPricing_OSFilter(t *testing.T) {
+	client := &mockRetailPricesClient{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]RetailPriceItem, error) {
+			return []RetailPriceItem{
 				{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series"},
 				{RetailPrice: 0.200, ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series Windows"},
 			}, nil
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.azureEnabled = true
-		e.azureOperatingSystems = []string{"Linux"} // Only Linux
-		e.azureInstanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-	})
-
-	scrapes := make(chan scrapeResult, 10)
+	var errorCount uint64
+	scrapes := make(chan provider.ScrapeResult, 10)
 	go func() {
-		e.getAzureOnDemandPricing(context.Background(), "eastus", client, scrapes)
+		GetOnDemandPricing(context.Background(), "eastus", client, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, &errorCount, scrapes)
 		close(scrapes)
 	}()
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -159,27 +138,21 @@ func TestGetAzureOnDemandPricing_OSFilter(t *testing.T) {
 	}
 }
 
-func TestGetAzureOnDemandPricing_EmptyResponse(t *testing.T) {
-	client := &mockAzureRetailPricesClient{
-		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
-			return []AzureRetailPriceItem{}, nil
+func TestGetOnDemandPricing_EmptyResponse(t *testing.T) {
+	client := &mockRetailPricesClient{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]RetailPriceItem, error) {
+			return []RetailPriceItem{}, nil
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.azureEnabled = true
-		e.azureOperatingSystems = []string{"Linux"}
-		e.azureInstanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-		e.errorCount = 0
-	})
-
-	scrapes := make(chan scrapeResult, 10)
+	var errorCount uint64
+	scrapes := make(chan provider.ScrapeResult, 10)
 	go func() {
-		e.getAzureOnDemandPricing(context.Background(), "eastus", client, scrapes)
+		GetOnDemandPricing(context.Background(), "eastus", client, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, &errorCount, scrapes)
 		close(scrapes)
 	}()
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -187,8 +160,8 @@ func TestGetAzureOnDemandPricing_EmptyResponse(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("expected 0 results, got %d", len(results))
 	}
-	if e.errorCount != 0 {
-		t.Errorf("expected 0 errors, got %d", e.errorCount)
+	if errorCount != 0 {
+		t.Errorf("expected 0 errors, got %d", errorCount)
 	}
 }
 

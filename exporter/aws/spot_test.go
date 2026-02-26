@@ -1,4 +1,4 @@
-package exporter
+package aws
 
 import (
 	"context"
@@ -6,9 +6,11 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
+	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
 func TestGetSpotPricing_SinglePage(t *testing.T) {
@@ -18,14 +20,14 @@ func TestGetSpotPricing_SinglePage(t *testing.T) {
 				SpotPriceHistory: []ec2types.SpotPrice{
 					{
 						InstanceType:       ec2types.InstanceTypeM5Large,
-						SpotPrice:          aws.String("0.05"),
-						AvailabilityZone:   aws.String("us-east-1a"),
+						SpotPrice:          awssdk.String("0.05"),
+						AvailabilityZone:   awssdk.String("us-east-1a"),
 						ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 					},
 					{
 						InstanceType:       ec2types.InstanceTypeM5Xlarge,
-						SpotPrice:          aws.String("0.10"),
-						AvailabilityZone:   aws.String("us-east-1b"),
+						SpotPrice:          awssdk.String("0.10"),
+						AvailabilityZone:   awssdk.String("us-east-1b"),
 						ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 					},
 				},
@@ -33,15 +35,14 @@ func TestGetSpotPricing_SinglePage(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSpotPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -67,12 +68,12 @@ func TestGetSpotPricing_MultiplePages(t *testing.T) {
 			callCount++
 			if callCount == 1 {
 				return &ec2.DescribeSpotPriceHistoryOutput{
-					NextToken: aws.String("page2"),
+					NextToken: awssdk.String("page2"),
 					SpotPriceHistory: []ec2types.SpotPrice{
 						{
 							InstanceType:       ec2types.InstanceTypeM5Large,
-							SpotPrice:          aws.String("0.05"),
-							AvailabilityZone:   aws.String("us-east-1a"),
+							SpotPrice:          awssdk.String("0.05"),
+							AvailabilityZone:   awssdk.String("us-east-1a"),
 							ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 						},
 					},
@@ -82,8 +83,8 @@ func TestGetSpotPricing_MultiplePages(t *testing.T) {
 				SpotPriceHistory: []ec2types.SpotPrice{
 					{
 						InstanceType:       ec2types.InstanceTypeM5Xlarge,
-						SpotPrice:          aws.String("0.10"),
-						AvailabilityZone:   aws.String("us-east-1b"),
+						SpotPrice:          awssdk.String("0.10"),
+						AvailabilityZone:   awssdk.String("us-east-1b"),
 						ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 					},
 				},
@@ -91,15 +92,14 @@ func TestGetSpotPricing_MultiplePages(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSpotPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -120,15 +120,14 @@ func TestGetSpotPricing_APIError(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSpotPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -136,8 +135,8 @@ func TestGetSpotPricing_APIError(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("expected 0 results on error, got %d", len(results))
 	}
-	if e.errorCount != 1 {
-		t.Errorf("expected errorCount=1, got %d", e.errorCount)
+	if errorCount != 1 {
+		t.Errorf("expected errorCount=1, got %d", errorCount)
 	}
 }
 
@@ -148,14 +147,14 @@ func TestGetSpotPricing_InstanceRegexFilter(t *testing.T) {
 				SpotPriceHistory: []ec2types.SpotPrice{
 					{
 						InstanceType:       ec2types.InstanceTypeM5Large,
-						SpotPrice:          aws.String("0.05"),
-						AvailabilityZone:   aws.String("us-east-1a"),
+						SpotPrice:          awssdk.String("0.05"),
+						AvailabilityZone:   awssdk.String("us-east-1a"),
 						ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 					},
 					{
 						InstanceType:       ec2types.InstanceTypeC5Xlarge,
-						SpotPrice:          aws.String("0.08"),
-						AvailabilityZone:   aws.String("us-east-1a"),
+						SpotPrice:          awssdk.String("0.08"),
+						AvailabilityZone:   awssdk.String("us-east-1a"),
 						ProductDescription: ec2types.RIProductDescriptionLinuxUnix,
 					},
 				},
@@ -163,16 +162,15 @@ func TestGetSpotPricing_InstanceRegexFilter(t *testing.T) {
 		},
 	}
 
-	// Only match m5.* instances
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(`^m5\.`)}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSpotPricing(context.Background(), "us-east-1", client, scrapes)
+	// Only match m5.* instances
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(`^m5\.`)}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -193,15 +191,14 @@ func TestGetSpotPricing_EmptyResponse(t *testing.T) {
 		},
 	}
 
-	e := newTestExporter(nil, func(e *Exporter) {
-		e.instanceRegexes = []*regexp.Regexp{regexp.MustCompile(".*")}
-	})
+	instances := testInstanceStore()
+	var errorCount uint64
 
-	scrapes := make(chan scrapeResult, 100)
-	e.getSpotPricing(context.Background(), "us-east-1", client, scrapes)
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	var results []scrapeResult
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
 	for r := range scrapes {
 		results = append(results, r)
 	}
@@ -209,7 +206,7 @@ func TestGetSpotPricing_EmptyResponse(t *testing.T) {
 	if len(results) != 0 {
 		t.Errorf("expected 0 results for empty response, got %d", len(results))
 	}
-	if e.errorCount != 0 {
-		t.Errorf("expected errorCount=0, got %d", e.errorCount)
+	if errorCount != 0 {
+		t.Errorf("expected errorCount=0, got %d", errorCount)
 	}
 }

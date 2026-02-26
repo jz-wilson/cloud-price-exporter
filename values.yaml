@@ -99,3 +99,9 @@ resources:
 nodeSelector: {}
 tolerations: []
 affinity: {}
+
+test:
+  enabled: true
+  image:
+    repository: busybox
+    tag: "1.37"

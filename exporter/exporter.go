@@ -11,10 +11,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
-)
 
-const (
-	AwsMaxResultsPerPage int32 = 100
+	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
+	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
+	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
 // AzureConfig holds configuration for Azure VM pricing scraping.
@@ -23,55 +23,44 @@ type AzureConfig struct {
 	Regions          []string
 	OperatingSystems []string
 	InstanceRegexes  []*regexp.Regexp
-	ClientFactory    AzureClientFactory
+	ClientFactory    azure.ClientFactory
 }
 
-// Exporter implements the prometheus.Exporter interface, and exports AWS EC2 Price metrics.
+// Exporter implements the prometheus.Collector interface and exports cloud pricing metrics.
 type Exporter struct {
+	// AWS fields
 	productDescriptions []string
 	operatingSystems    []string
 	regions             []string
 	lifecycle           []string
-	duration            prometheus.Gauge
-	scrapeErrors        prometheus.Gauge
-	totalScrapes        prometheus.Counter
-	pricingMetrics      map[string]*prometheus.GaugeVec
-	instances           map[string]Instance
 	instanceRegexes     []*regexp.Regexp
 	savingPlanTypes     []string
-	clientFactory       ClientFactory
+	clientFactory       aws.ClientFactory
+	instances           *aws.InstanceStore
 	cache               int
-	nextScrape          time.Time
-	errorCount          uint64
-	mu sync.Mutex
 
 	// Azure fields
 	azureEnabled          bool
 	azureRegions          []string
 	azureOperatingSystems []string
 	azureInstanceRegexes  []*regexp.Regexp
-	azureClientFactory    AzureClientFactory
+	azureClientFactory    azure.ClientFactory
+
+	// Prometheus metrics
+	duration       prometheus.Gauge
+	scrapeErrors   prometheus.Gauge
+	totalScrapes   prometheus.Counter
+	pricingMetrics map[string]*prometheus.GaugeVec
+
+	// State
+	nextScrape time.Time
+	errorCount uint64
+	mu         sync.Mutex
 }
 
-type scrapeResult struct {
-	Name               string
-	Value              float64
-	Region             string
-	AvailabilityZone   string
-	InstanceType       string
-	InstanceLifecycle  string
-	ProductDescription string
-	OperatingSystem    string
-	SavingPlanOption   string
-	SavingPlanDuration int
-	SavingPlanType     string
-	Memory             string
-	VCpu               string
-}
-
-// NewExporter returns a new exporter of AWS EC2 Price metrics.
+// NewExporter returns a new exporter of cloud pricing metrics.
 // Pass nil for azureCfg to disable Azure VM pricing.
-func NewExporter(pds []string, oss []string, regions []string, lifecycle []string, cache int, instanceRegexes []*regexp.Regexp, savingPlanTypes []string, clientFactory ClientFactory, azureCfg *AzureConfig) (*Exporter, error) {
+func NewExporter(pds []string, oss []string, regions []string, lifecycle []string, cache int, instanceRegexes []*regexp.Regexp, savingPlanTypes []string, clientFactory aws.ClientFactory, azureCfg *AzureConfig) (*Exporter, error) {
 
 	e := Exporter{
 		productDescriptions: pds,
@@ -82,6 +71,7 @@ func NewExporter(pds []string, oss []string, regions []string, lifecycle []strin
 		instanceRegexes:     instanceRegexes,
 		savingPlanTypes:     savingPlanTypes,
 		clientFactory:       clientFactory,
+		instances:           aws.NewInstanceStore(),
 		nextScrape:          time.Now(),
 		duration: prometheus.NewGauge(prometheus.GaugeOpts{
 			Namespace: "aws_pricing",
@@ -116,7 +106,7 @@ func NewExporter(pds []string, oss []string, regions []string, lifecycle []strin
 		if err != nil {
 			return nil, fmt.Errorf("failed to create EC2 client: %w", err)
 		}
-		if err := e.getInstances(context.Background(), ec2Client); err != nil {
+		if err := e.instances.Load(context.Background(), ec2Client); err != nil {
 			return nil, err
 		}
 	}
@@ -170,7 +160,7 @@ func (e *Exporter) Describe(ch chan<- *prometheus.Desc) {
 	ch <- e.scrapeErrors.Desc()
 }
 
-// Collect fetches info from the AWS API
+// Collect fetches info from cloud provider APIs.
 func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 
 	e.mu.Lock()
@@ -178,7 +168,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 		// Set nextScrape immediately to prevent concurrent scrapes from entering
 		e.nextScrape = time.Now().Add(time.Second * time.Duration(e.cache))
 
-		pricingScrapes := make(chan scrapeResult)
+		pricingScrapes := make(chan provider.ScrapeResult)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer cancel()
@@ -198,7 +188,7 @@ func (e *Exporter) Collect(ch chan<- prometheus.Metric) {
 	}
 }
 
-func (e *Exporter) scrape(ctx context.Context, scrapes chan<- scrapeResult) {
+func (e *Exporter) scrape(ctx context.Context, scrapes chan<- provider.ScrapeResult) {
 
 	defer close(scrapes)
 	now := time.Now()
@@ -222,18 +212,18 @@ func (e *Exporter) scrape(ctx context.Context, scrapes chan<- scrapeResult) {
 				return
 			}
 
-			if contains(e.lifecycle, "spot") {
-				e.getSpotPricing(ctx, region, ec2Client, scrapes)
+			if provider.Contains(e.lifecycle, "spot") {
+				aws.GetSpotPricing(ctx, region, ec2Client, e.productDescriptions, e.instanceRegexes, e.instances, &e.errorCount, scrapes)
 			}
 
-			if contains(e.lifecycle, "ondemand") {
+			if provider.Contains(e.lifecycle, "ondemand") {
 				pricingClient, err := e.clientFactory.NewPricingClient()
 				if err != nil {
 					log.WithError(err).Errorf("failed to create Pricing client [region=%s]", region)
 					atomic.AddUint64(&e.errorCount, 1)
 					return
 				}
-				e.getOnDemandPricing(ctx, region, ec2Client, pricingClient, scrapes)
+				aws.GetOnDemandPricing(ctx, region, ec2Client, pricingClient, e.operatingSystems, e.instanceRegexes, e.instances, &e.errorCount, scrapes)
 			}
 
 			if len(e.savingPlanTypes) != 0 {
@@ -243,7 +233,7 @@ func (e *Exporter) scrape(ctx context.Context, scrapes chan<- scrapeResult) {
 					atomic.AddUint64(&e.errorCount, 1)
 					return
 				}
-				e.getSavingPlanPricing(ctx, region, spClient, scrapes)
+				aws.GetSavingPlanPricing(ctx, region, spClient, e.savingPlanTypes, e.productDescriptions, e.instanceRegexes, e.instances, &e.errorCount, scrapes)
 			}
 
 		}(region)
@@ -254,8 +244,8 @@ func (e *Exporter) scrape(ctx context.Context, scrapes chan<- scrapeResult) {
 			wg.Add(1)
 			go func(region string) {
 				defer wg.Done()
-				client := e.azureClientFactory.NewAzureRetailPricesClient()
-				e.getAzureOnDemandPricing(ctx, region, client, scrapes)
+				client := e.azureClientFactory.NewRetailPricesClient()
+				azure.GetOnDemandPricing(ctx, region, client, e.azureOperatingSystems, e.azureInstanceRegexes, &e.errorCount, scrapes)
 			}(region)
 		}
 	}
@@ -266,7 +256,7 @@ func (e *Exporter) scrape(ctx context.Context, scrapes chan<- scrapeResult) {
 	e.duration.Set(time.Since(now).Seconds())
 }
 
-func (e *Exporter) setPricingMetrics(scrapes <-chan scrapeResult) {
+func (e *Exporter) setPricingMetrics(scrapes <-chan provider.ScrapeResult) {
 	log.Debug("set pricing metrics")
 	for scr := range scrapes {
 		name := scr.Name
@@ -302,29 +292,11 @@ func (e *Exporter) setPricingMetrics(scrapes <-chan scrapeResult) {
 		} else if name == "azure_vm" {
 			labels = map[string]string{
 				"instance_lifecycle": scr.InstanceLifecycle,
-				"instance_type":     scr.InstanceType,
-				"region":            scr.Region,
-				"operating_system":  scr.OperatingSystem,
+				"instance_type":      scr.InstanceType,
+				"region":             scr.Region,
+				"operating_system":   scr.OperatingSystem,
 			}
 		}
 		e.pricingMetrics[name].With(labels).Set(float64(scr.Value))
 	}
-}
-
-func contains(elems []string, v string) bool {
-	for _, s := range elems {
-		if v == s {
-			return true
-		}
-	}
-	return false
-}
-
-func isMatchAny(regexList []*regexp.Regexp, text string) bool {
-	for _, regex := range regexList {
-		if regex.MatchString(text) {
-			return true
-		}
-	}
-	return false
 }
