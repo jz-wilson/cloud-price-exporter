@@ -1,0 +1,10 @@
+mode: Mainline
+next-version: 2.0.0
+tag-prefix: cloud-price-exporter/
+branches:
+  master:
+    regex: ^master$
+    increment: Patch
+  feature:
+    regex: ^features?[/-]
+    increment: Inherit
