@@ -35,15 +35,17 @@ func NewDefaultAzureClientFactory() *DefaultAzureClientFactory {
 
 func (f *DefaultAzureClientFactory) NewAzureRetailPricesClient() AzureRetailPricesClient {
 	return &HTTPAzureRetailPricesClient{
-		client:  f.client,
-		baseURL: azureRetailPricesBaseURL,
+		client:     f.client,
+		baseURL:    azureRetailPricesBaseURL,
+		retryDelay: time.Second,
 	}
 }
 
 // HTTPAzureRetailPricesClient calls the Azure Retail Prices REST API over HTTP.
 type HTTPAzureRetailPricesClient struct {
-	client  *http.Client
-	baseURL string // overridable for tests
+	client     *http.Client
+	baseURL    string        // overridable for tests
+	retryDelay time.Duration // base unit for exponential backoff; defaults to time.Second
 }
 
 func (c *HTTPAzureRetailPricesClient) GetVMPrices(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
@@ -118,18 +120,22 @@ func (c *HTTPAzureRetailPricesClient) GetVMPrices(ctx context.Context, region st
 const maxRetries = 3
 
 func (c *HTTPAzureRetailPricesClient) doWithRetry(req *http.Request) (*http.Response, error) {
+	delay := c.retryDelay
+	if delay == 0 {
+		delay = time.Second
+	}
 	var lastErr error
 	for attempt := range maxRetries {
 		resp, err := c.client.Do(req)
 		if err != nil {
 			lastErr = err
-			time.Sleep(time.Duration(1<<attempt) * time.Second)
+			time.Sleep(time.Duration(1<<attempt) * delay)
 			continue
 		}
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
 			resp.Body.Close()
 			lastErr = fmt.Errorf("Azure API returned status %d", resp.StatusCode)
-			time.Sleep(time.Duration(1<<attempt) * time.Second)
+			time.Sleep(time.Duration(1<<attempt) * delay)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
