@@ -1,0 +1,99 @@
+# Default values for cloud-price-exporter.
+
+image:
+  repository: ghcr.io/jz-wilson/cloud-price-exporter
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+# Exporter configuration (maps to CLI flags)
+exporter:
+  # Cache duration in seconds (0 = no cache)
+  cache: 300
+  # Comma-separated instance type regexes (empty = all) — applies to AWS
+  instanceRegexes: ""
+  # Log level: debug, info, warn, error
+  logLevel: "info"
+
+  # AWS EC2 pricing configuration
+  aws:
+    # Enable AWS EC2 pricing (requires IAM credentials)
+    enabled: true
+    # Comma-separated AWS regions (empty = auto-discover all)
+    regions: ""
+    # Comma-separated lifecycles: spot, ondemand
+    lifecycle: "spot,ondemand"
+    # Comma-separated product descriptions for spot filtering
+    productDescriptions: "Linux/UNIX"
+    # Comma-separated operating systems for on-demand filtering
+    operatingSystems: "Linux"
+    # Comma-separated savings plan types: Compute, EC2Instance, SageMaker (empty = none)
+    savingPlanTypes: ""
+
+  # Azure VM on-demand pricing configuration
+  azure:
+    # Enable Azure VM pricing (no auth required)
+    enabled: true
+    # Comma-separated Azure regions (required when enabled)
+    regions: ""
+    # Comma-separated OS types: Linux, Windows
+    operatingSystems: "Linux"
+    # Comma-separated instance type regexes (empty = all)
+    instanceRegexes: ""
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+imagePullSecrets: []
+
+livenessProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 10
+  failureThreshold: 5
+
+readinessProbe:
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  timeoutSeconds: 5
+
+service:
+  type: ClusterIP
+  port: 8080
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+  # For IRSA on EKS, set the IAM role ARN:
+  # annotations:
+  #   eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/cloud-price-exporter
+
+serviceMonitor:
+  enabled: false
+  interval: "5m"
+  scrapeTimeout: "30s"
+  additionalLabels: {}
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

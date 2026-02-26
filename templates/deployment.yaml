@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "cloud-price-exporter.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "cloud-price-exporter.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "cloud-price-exporter.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "cloud-price-exporter.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "cloud-price-exporter.serviceAccountName" . }}
+      {{- with .Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- with .Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          args:
+            - -listen-address=:{{ .Values.service.port }}
+            - -log-level={{ .Values.exporter.logLevel }}
+            - -cache={{ .Values.exporter.cache }}
+            {{- if .Values.exporter.instanceRegexes }}
+            - -instance-regexes={{ .Values.exporter.instanceRegexes }}
+            {{- end }}
+            {{- /* AWS configuration */}}
+            - -aws-enabled={{ .Values.exporter.aws.enabled }}
+            {{- if .Values.exporter.aws.enabled }}
+            - -lifecycle={{ .Values.exporter.aws.lifecycle }}
+            - -product-descriptions={{ .Values.exporter.aws.productDescriptions }}
+            - -operating-systems={{ .Values.exporter.aws.operatingSystems }}
+            {{- if .Values.exporter.aws.regions }}
+            - -regions={{ .Values.exporter.aws.regions }}
+            {{- end }}
+            {{- if .Values.exporter.aws.savingPlanTypes }}
+            - -saving-plan-types={{ .Values.exporter.aws.savingPlanTypes }}
+            {{- end }}
+            {{- end }}
+            {{- /* Azure configuration */}}
+            - -azure-enabled={{ .Values.exporter.azure.enabled }}
+            {{- if .Values.exporter.azure.enabled }}
+            {{- if .Values.exporter.azure.regions }}
+            - -azure-regions={{ .Values.exporter.azure.regions }}
+            {{- end }}
+            - -azure-operating-systems={{ .Values.exporter.azure.operatingSystems }}
+            {{- if .Values.exporter.azure.instanceRegexes }}
+            - -azure-instance-regexes={{ .Values.exporter.azure.instanceRegexes }}
+            {{- end }}
+            {{- end }}
+          ports:
+            - name: http-metrics
+              containerPort: {{ .Values.service.port }}
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http-metrics
+            initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.livenessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds }}
+            failureThreshold: {{ .Values.livenessProbe.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http-metrics
+            initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds }}
+            periodSeconds: {{ .Values.readinessProbe.periodSeconds }}
+            timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

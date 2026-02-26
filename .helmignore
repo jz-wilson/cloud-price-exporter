@@ -1,0 +1,26 @@
+# Patterns to ignore when building packages.
+.DS_Store
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+*.swp
+*.bak
+*.tmp
+*~
+.project
+.idea/
+*.tmproj
+# Go source
+*.go
+go.mod
+go.sum
+exporter/
+*_test.go
+# Build
+Dockerfile
+azure-pipelines.yml
+coverage.out

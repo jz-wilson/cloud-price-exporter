@@ -1,0 +1,18 @@
+apiVersion: v2
+appVersion: "1.2.0"
+description: Prometheus exporter for cloud VM pricing (AWS EC2, Azure VMs)
+name: cloud-price-exporter
+version: 0.3.0
+keywords:
+  - aws
+  - azure
+  - ec2
+  - pricing
+  - prometheus
+  - exporter
+sources:
+  - https://github.com/pixelfederation/cloud-price-exporter
+home: https://github.com/jz-wilson/cloud-price-exporter
+maintainers:
+  - name: Johnzell Wilson
+    email: jz-wilson@users.noreply.github.com

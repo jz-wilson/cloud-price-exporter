@@ -1,0 +1,9 @@
+*.md
+.git
+.gitignore
+.helmignore
+azure-pipelines.yml
+templates/
+values.yaml
+Chart.yaml
+*_test.go
