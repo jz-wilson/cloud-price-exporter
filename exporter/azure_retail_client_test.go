@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestHTTPClient_SinglePage(t *testing.T) {
@@ -22,8 +23,9 @@ func TestHTTPClient_SinglePage(t *testing.T) {
 	defer srv.Close()
 
 	client := &HTTPAzureRetailPricesClient{
-		client:  srv.Client(),
-		baseURL: srv.URL,
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
 	}
 
 	items, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})
@@ -65,8 +67,9 @@ func TestHTTPClient_Pagination(t *testing.T) {
 	defer srv.Close()
 
 	client := &HTTPAzureRetailPricesClient{
-		client:  srv.Client(),
-		baseURL: srv.URL,
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
 	}
 
 	items, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})
@@ -88,8 +91,9 @@ func TestHTTPClient_ServerError(t *testing.T) {
 	defer srv.Close()
 
 	client := &HTTPAzureRetailPricesClient{
-		client:  srv.Client(),
-		baseURL: srv.URL,
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
 	}
 
 	_, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})
@@ -114,8 +118,9 @@ func TestHTTPClient_FiltersSpotAndLowPriority(t *testing.T) {
 	defer srv.Close()
 
 	client := &HTTPAzureRetailPricesClient{
-		client:  srv.Client(),
-		baseURL: srv.URL,
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
 	}
 
 	items, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})
@@ -145,8 +150,9 @@ func TestHTTPClient_FiltersNonHourly(t *testing.T) {
 	defer srv.Close()
 
 	client := &HTTPAzureRetailPricesClient{
-		client:  srv.Client(),
-		baseURL: srv.URL,
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
 	}
 
 	items, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})

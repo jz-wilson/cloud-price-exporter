@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sync"
 	"testing"
 	"time"
 
@@ -12,7 +13,9 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
+	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func newMockFactoryWithInstances() *mockClientFactory {
@@ -451,5 +454,286 @@ func TestCollect_AWSAndAzure(t *testing.T) {
 	// Total: at least 7
 	if count < 7 {
 		t.Errorf("expected at least 7 metrics (AWS + Azure + internal), got %d", count)
+	}
+}
+
+func TestCollect_ConcurrentSafety(t *testing.T) {
+	factory := newMockFactoryWithInstances()
+
+	e := newTestExporter(factory, func(e *Exporter) {
+		e.lifecycle = []string{"spot"}
+		e.cache = 0
+		e.nextScrape = time.Now().Add(-1 * time.Second)
+	})
+
+	var wg sync.WaitGroup
+	for range 10 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ch := make(chan prometheus.Metric, 100)
+			e.Collect(ch)
+			close(ch)
+			for range ch {
+			}
+		}()
+	}
+	wg.Wait()
+	// Success: no panic, no data race (verified by -race flag)
+}
+
+func TestSetPricingMetrics_UnknownName(t *testing.T) {
+	e := newTestExporter(nil)
+
+	scrapes := make(chan scrapeResult, 1)
+	scrapes <- scrapeResult{
+		Name:         "nonexistent",
+		Value:        1.0,
+		Region:       "us-east-1",
+		InstanceType: "m5.large",
+	}
+	close(scrapes)
+
+	// Should not panic — unknown names are silently dropped with a log warning
+	e.setPricingMetrics(scrapes)
+}
+
+// findMetricFamily returns the named MetricFamily from gathered output, or nil.
+func findMetricFamily(families []*dto.MetricFamily, name string) *dto.MetricFamily {
+	for _, f := range families {
+		if f.GetName() == name {
+			return f
+		}
+	}
+	return nil
+}
+
+// hasLabelValue checks whether at least one metric in the family has the given label=value pair.
+func hasLabelValue(family *dto.MetricFamily, label, value string) bool {
+	for _, m := range family.GetMetric() {
+		for _, lp := range m.GetLabel() {
+			if lp.GetName() == label && lp.GetValue() == value {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestEndToEnd_SpotPricing(t *testing.T) {
+	factory := newMockFactoryWithInstances()
+
+	exp, err := NewExporter(
+		[]string{"Linux/UNIX"},
+		[]string{"Linux"},
+		[]string{"us-east-1"},
+		[]string{"spot"},
+		0,
+		[]*regexp.Regexp{regexp.MustCompile(".*")},
+		[]string{},
+		factory,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(exp); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+
+	ec2Family := findMetricFamily(families, "aws_pricing_ec2")
+	if ec2Family == nil {
+		t.Fatal("expected aws_pricing_ec2 metric family")
+	}
+	if !hasLabelValue(ec2Family, "instance_lifecycle", "spot") {
+		t.Error("expected instance_lifecycle=spot label on aws_pricing_ec2")
+	}
+	if !hasLabelValue(ec2Family, "instance_type", "m5.large") {
+		t.Error("expected instance_type=m5.large label on aws_pricing_ec2")
+	}
+}
+
+func TestEndToEnd_OnDemandPricing(t *testing.T) {
+	pricingJSON := makePricingJSON("SKU001", "m5.large", "Linux", "0.096")
+
+	factory := &mockClientFactory{
+		ec2Client: &mockEC2Client{
+			DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
+				return &ec2.DescribeInstanceTypesOutput{
+					InstanceTypes: []ec2types.InstanceTypeInfo{
+						{
+							InstanceType: ec2types.InstanceTypeM5Large,
+							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: aws.Int64(8192)},
+							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: aws.Int32(2)},
+						},
+					},
+				}, nil
+			},
+			DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
+				return &ec2.DescribeAvailabilityZonesOutput{
+					AvailabilityZones: []ec2types.AvailabilityZone{
+						{ZoneName: aws.String("us-east-1a")},
+					},
+				}, nil
+			},
+		},
+		pricingClient: &mockPricingClient{
+			GetProductsFn: func(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error) {
+				return &pricing.GetProductsOutput{
+					PriceList: []string{pricingJSON},
+				}, nil
+			},
+		},
+	}
+
+	exp, err := NewExporter(
+		[]string{"Linux/UNIX"},
+		[]string{"Linux"},
+		[]string{"us-east-1"},
+		[]string{"ondemand"},
+		0,
+		[]*regexp.Regexp{regexp.MustCompile(".*")},
+		[]string{},
+		factory,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(exp); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+
+	ec2Family := findMetricFamily(families, "aws_pricing_ec2")
+	if ec2Family == nil {
+		t.Fatal("expected aws_pricing_ec2 metric family")
+	}
+	if !hasLabelValue(ec2Family, "instance_lifecycle", "ondemand") {
+		t.Error("expected instance_lifecycle=ondemand label on aws_pricing_ec2")
+	}
+}
+
+func TestEndToEnd_SavingsPlanPricing(t *testing.T) {
+	factory := &mockClientFactory{
+		ec2Client: &mockEC2Client{
+			DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
+				return &ec2.DescribeInstanceTypesOutput{
+					InstanceTypes: []ec2types.InstanceTypeInfo{
+						{
+							InstanceType: ec2types.InstanceTypeM5Large,
+							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: aws.Int64(8192)},
+							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: aws.Int32(2)},
+						},
+					},
+				}, nil
+			},
+		},
+		spClient: &mockSavingsPlansClient{
+			DescribeSavingsPlansOfferingRatesFn: func(ctx context.Context, params *savingsplans.DescribeSavingsPlansOfferingRatesInput, optFns ...func(*savingsplans.Options)) (*savingsplans.DescribeSavingsPlansOfferingRatesOutput, error) {
+				return &savingsplans.DescribeSavingsPlansOfferingRatesOutput{
+					SearchResults: []savingsplansTypes.SavingsPlanOfferingRate{
+						makeSavingsPlanRate("m5.large", "0.04", 31536000),
+					},
+				}, nil
+			},
+		},
+	}
+
+	exp, err := NewExporter(
+		[]string{"Linux/UNIX"},
+		[]string{"Linux"},
+		[]string{"us-east-1"},
+		[]string{},
+		0,
+		[]*regexp.Regexp{regexp.MustCompile(".*")},
+		[]string{"Compute"},
+		factory,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(exp); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+
+	ec2Family := findMetricFamily(families, "aws_pricing_ec2")
+	if ec2Family == nil {
+		t.Fatal("expected aws_pricing_ec2 metric family for savings plan path")
+	}
+	if !hasLabelValue(ec2Family, "saving_plan_type", "Compute") {
+		t.Error("expected saving_plan_type=Compute label on aws_pricing_ec2")
+	}
+}
+
+func TestEndToEnd_AzurePricing(t *testing.T) {
+	azureClient := &mockAzureRetailPricesClient{
+		GetVMPricesFn: func(ctx context.Context, region string, osTypes []string) ([]AzureRetailPriceItem, error) {
+			return []AzureRetailPriceItem{
+				{RetailPrice: 0.096, ArmRegionName: "eastus", ArmSkuName: "Standard_D2s_v5", ProductName: "Virtual Machines Dv5 Series", MeterName: "D2s v5"},
+			}, nil
+		},
+	}
+
+	// No AWS regions — Azure only
+	factory := &mockClientFactory{}
+
+	exp, err := NewExporter(
+		[]string{},
+		[]string{},
+		[]string{},
+		[]string{},
+		0,
+		[]*regexp.Regexp{},
+		[]string{},
+		factory,
+		&AzureConfig{
+			Regions:          []string{"eastus"},
+			OperatingSystems: []string{"Linux"},
+			InstanceRegexes:  []*regexp.Regexp{regexp.MustCompile(".*")},
+			ClientFactory:    &mockAzureClientFactory{client: azureClient},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewExporter: %v", err)
+	}
+
+	reg := prometheus.NewRegistry()
+	if err := reg.Register(exp); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+
+	azureFamily := findMetricFamily(families, "azure_pricing_vm")
+	if azureFamily == nil {
+		t.Fatal("expected azure_pricing_vm metric family")
+	}
+	if !hasLabelValue(azureFamily, "instance_type", "Standard_D2s_v5") {
+		t.Error("expected instance_type=Standard_D2s_v5 on azure_pricing_vm")
 	}
 }
