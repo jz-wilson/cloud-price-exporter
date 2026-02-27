@@ -1,8 +1,8 @@
 apiVersion: v2
-appVersion: "1.2.0"
+appVersion: "2.0.0"
 description: Prometheus exporter for cloud VM pricing (AWS EC2, Azure VMs)
 name: cloud-price-exporter
-version: 0.3.0
+version: 2.0.0
 keywords:
   - aws
   - azure
