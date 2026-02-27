@@ -212,13 +212,7 @@ func (e *Exporter) scrape(ctx context.Context, scrapes chan<- provider.ScrapeRes
 			}
 
 			if provider.Contains(e.lifecycle, "ondemand") {
-				pricingClient, err := e.clientFactory.NewPricingClient()
-				if err != nil {
-					log.WithError(err).Errorf("failed to create Pricing client [region=%s]", region)
-					atomic.AddUint64(&e.errorCount, 1)
-					return
-				}
-				aws.GetOnDemandPricing(ctx, region, ec2Client, pricingClient, e.operatingSystems, e.instanceRegexes, e.instances, &e.errorCount, scrapes)
+				aws.GetOnDemandPricing(ctx, region, ec2Client, nil, e.operatingSystems, e.instanceRegexes, e.instances, &e.errorCount, scrapes)
 			}
 
 			if len(e.savingPlanTypes) != 0 {

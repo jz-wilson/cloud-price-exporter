@@ -6,7 +6,6 @@ require (
 	github.com/aws/aws-sdk-go-v2 v1.41.2
 	github.com/aws/aws-sdk-go-v2/config v1.32.10
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.292.0
-	github.com/aws/aws-sdk-go-v2/service/pricing v1.40.12
 	github.com/aws/aws-sdk-go-v2/service/savingsplans v1.31.3
 	github.com/prometheus/client_golang v1.23.2
 	github.com/prometheus/client_model v0.6.2

@@ -4,38 +4,43 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"testing"
 
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/aws-sdk-go-v2/service/pricing"
 
 	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
-// makePricingJSON builds a valid pricing JSON string for testing.
-func makePricingJSON(sku, instanceType, os string, priceUSD string) string {
-	p := Pricing{
-		Product: Product{
-			Sku:           sku,
-			ProductFamily: "Compute Instance",
-			Attributes: map[string]string{
-				"instanceType":       instanceType,
-				"operatingSystem":    os,
-				"productDescription": "Linux/UNIX",
+// makeBulkPricingJSON builds a valid bulk pricing JSON string for testing.
+func makeBulkPricingJSON(sku, instanceType, os, priceUSD string) string {
+	resp := BulkPricingResponse{
+		Products: map[string]BulkProduct{
+			sku: {
+				SKU:           sku,
+				ProductFamily: "Compute Instance",
+				Attributes: map[string]string{
+					"instanceType":       instanceType,
+					"operatingSystem":    os,
+					"tenancy":            "Shared",
+					"capacitystatus":     "Used",
+					"preInstalledSw":     "NA",
+					"productDescription": "Linux/UNIX",
+				},
 			},
 		},
-		ServiceCode: "AmazonEC2",
-		Terms: Terms{
-			OnDemand: map[string]SKU{
-				fmt.Sprintf("%s.%s", sku, TermOnDemand): {
-					PriceDimensions: map[string]Details{
-						fmt.Sprintf("%s.%s.%s", sku, TermOnDemand, TermPerHour): {
-							Unit: "Hrs",
-							PricePerUnit: map[string]string{
-								"USD": priceUSD,
+		Terms: BulkTerms{
+			OnDemand: map[string]map[string]BulkOfferTerm{
+				sku: {
+					fmt.Sprintf("%s.%s", sku, TermOnDemand): {
+						OfferTermCode: TermOnDemand,
+						PriceDimensions: map[string]BulkPriceDimension{
+							fmt.Sprintf("%s.%s.%s", sku, TermOnDemand, TermPerHour): {
+								PricePerUnit: map[string]string{"USD": priceUSD},
 							},
 						},
 					},
@@ -43,8 +48,24 @@ func makePricingJSON(sku, instanceType, os string, priceUSD string) string {
 			},
 		},
 	}
-	b, _ := json.Marshal(p)
+	b, _ := json.Marshal(resp)
 	return string(b)
+}
+
+// setupBulkPricingServer starts an httptest server serving the given JSON body
+// and overrides BulkPricingURLFormat for the duration of the test.
+func setupBulkPricingServer(t *testing.T, body string, statusCode int) *httptest.Server {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(statusCode)
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(ts.Close)
+	orig := BulkPricingURLFormat
+	BulkPricingURLFormat = ts.URL + "/%s"
+	t.Cleanup(func() { BulkPricingURLFormat = orig })
+	return ts
 }
 
 func TestGetOnDemandPricing_SinglePage(t *testing.T) {
@@ -59,21 +80,14 @@ func TestGetOnDemandPricing_SinglePage(t *testing.T) {
 		},
 	}
 
-	pricingJSON := makePricingJSON("SKU001", "m5.large", "Linux", "0.096")
-
-	pricingClient := &mockPricingClient{
-		GetProductsFn: func(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error) {
-			return &pricing.GetProductsOutput{
-				PriceList: []string{pricingJSON},
-			}, nil
-		},
-	}
+	bulkJSON := makeBulkPricingJSON("SKU001", "m5.large", "Linux", "0.096")
+	setupBulkPricingServer(t, bulkJSON, http.StatusOK)
 
 	instances := testInstanceStore()
 	var errorCount uint64
 
 	scrapes := make(chan provider.ScrapeResult, 100)
-	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, pricingClient, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
+	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
 	results := make([]provider.ScrapeResult, 0, len(scrapes))
@@ -101,7 +115,7 @@ func TestGetOnDemandPricing_SinglePage(t *testing.T) {
 	}
 }
 
-func TestGetOnDemandPricing_APIError(t *testing.T) {
+func TestGetOnDemandPricing_HTTPError(t *testing.T) {
 	ec2Client := &mockEC2Client{
 		DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 			return &ec2.DescribeAvailabilityZonesOutput{
@@ -112,17 +126,13 @@ func TestGetOnDemandPricing_APIError(t *testing.T) {
 		},
 	}
 
-	pricingClient := &mockPricingClient{
-		GetProductsFn: func(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error) {
-			return nil, fmt.Errorf("service unavailable")
-		},
-	}
+	setupBulkPricingServer(t, "error", http.StatusInternalServerError)
 
 	instances := testInstanceStore()
 	var errorCount uint64
 
 	scrapes := make(chan provider.ScrapeResult, 100)
-	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, pricingClient, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
+	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
 	results := make([]provider.ScrapeResult, 0, len(scrapes))
@@ -131,7 +141,71 @@ func TestGetOnDemandPricing_APIError(t *testing.T) {
 	}
 
 	if len(results) != 0 {
-		t.Errorf("expected 0 results on pricing API error, got %d", len(results))
+		t.Errorf("expected 0 results on HTTP error, got %d", len(results))
+	}
+	if errorCount == 0 {
+		t.Error("expected errorCount to be incremented on HTTP error")
+	}
+}
+
+func TestGetOnDemandPricing_EmptyResults(t *testing.T) {
+	ec2Client := &mockEC2Client{
+		DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
+			return &ec2.DescribeAvailabilityZonesOutput{
+				AvailabilityZones: []ec2types.AvailabilityZone{
+					{ZoneName: awssdk.String("us-east-1a")},
+				},
+			}, nil
+		},
+	}
+
+	// Serve an empty bulk pricing response
+	emptyResp := BulkPricingResponse{
+		Products: map[string]BulkProduct{},
+		Terms:    BulkTerms{OnDemand: map[string]map[string]BulkOfferTerm{}},
+	}
+	emptyJSON, _ := json.Marshal(emptyResp)
+	setupBulkPricingServer(t, string(emptyJSON), http.StatusOK)
+
+	instances := testInstanceStore()
+	var errorCount uint64
+
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
+	close(scrapes)
+
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
+	for r := range scrapes {
+		results = append(results, r)
+	}
+
+	if len(results) != 0 {
+		t.Errorf("expected 0 results for empty pricing, got %d", len(results))
+	}
+}
+
+func TestGetOnDemandPricing_NilEC2Client(t *testing.T) {
+	bulkJSON := makeBulkPricingJSON("SKU001", "m5.large", "Linux", "0.096")
+	setupBulkPricingServer(t, bulkJSON, http.StatusOK)
+
+	instances := testInstanceStore()
+	var errorCount uint64
+
+	scrapes := make(chan provider.ScrapeResult, 100)
+	GetOnDemandPricing(context.Background(), "us-east-1", nil, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
+	close(scrapes)
+
+	results := make([]provider.ScrapeResult, 0, len(scrapes))
+	for r := range scrapes {
+		results = append(results, r)
+	}
+
+	// 1 instance × 1 AZ (region fallback) × 3 metrics = 3 results
+	if len(results) != 3 {
+		t.Fatalf("expected 3 scrape results with nil ec2Client, got %d", len(results))
+	}
+	if results[0].AvailabilityZone != "us-east-1" {
+		t.Errorf("expected AZ=us-east-1 (region fallback), got %s", results[0].AvailabilityZone)
 	}
 }
 

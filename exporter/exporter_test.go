@@ -14,7 +14,6 @@ import (
 	awssdk "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
 	"github.com/prometheus/client_golang/prometheus"
@@ -76,11 +75,6 @@ func newMockFactoryWithInstances() *mockClientFactory {
 						{ZoneName: awssdk.String("us-east-1a")},
 					},
 				}, nil
-			},
-		},
-		pricingClient: &mockPricingClient{
-			GetProductsFn: func(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error) {
-				return &pricing.GetProductsOutput{}, nil
 			},
 		},
 		spClient: &mockSavingsPlansClient{
@@ -564,27 +558,31 @@ func TestEndToEnd_SpotPricing(t *testing.T) {
 	}
 }
 
-// makePricingJSON builds a valid pricing JSON string for testing.
-func makePricingJSON(sku, instanceType, os string, priceUSD string) string {
-	p := aws.Pricing{
-		Product: aws.Product{
-			Sku:           sku,
-			ProductFamily: "Compute Instance",
-			Attributes: map[string]string{
-				"instanceType":       instanceType,
-				"operatingSystem":    os,
-				"productDescription": "Linux/UNIX",
+// makeBulkPricingJSON builds a valid bulk pricing JSON string for testing.
+func makeBulkPricingJSON(sku, instanceType, os, priceUSD string) string {
+	resp := aws.BulkPricingResponse{
+		Products: map[string]aws.BulkProduct{
+			sku: {
+				SKU:           sku,
+				ProductFamily: "Compute Instance",
+				Attributes: map[string]string{
+					"instanceType":       instanceType,
+					"operatingSystem":    os,
+					"tenancy":            "Shared",
+					"capacitystatus":     "Used",
+					"preInstalledSw":     "NA",
+					"productDescription": "Linux/UNIX",
+				},
 			},
 		},
-		ServiceCode: "AmazonEC2",
-		Terms: aws.Terms{
-			OnDemand: map[string]aws.SKU{
-				fmt.Sprintf("%s.%s", sku, aws.TermOnDemand): {
-					PriceDimensions: map[string]aws.Details{
-						fmt.Sprintf("%s.%s.%s", sku, aws.TermOnDemand, aws.TermPerHour): {
-							Unit: "Hrs",
-							PricePerUnit: map[string]string{
-								"USD": priceUSD,
+		Terms: aws.BulkTerms{
+			OnDemand: map[string]map[string]aws.BulkOfferTerm{
+				sku: {
+					fmt.Sprintf("%s.%s", sku, aws.TermOnDemand): {
+						OfferTermCode: aws.TermOnDemand,
+						PriceDimensions: map[string]aws.BulkPriceDimension{
+							fmt.Sprintf("%s.%s.%s", sku, aws.TermOnDemand, aws.TermPerHour): {
+								PricePerUnit: map[string]string{"USD": priceUSD},
 							},
 						},
 					},
@@ -592,8 +590,22 @@ func makePricingJSON(sku, instanceType, os string, priceUSD string) string {
 			},
 		},
 	}
-	b, _ := json.Marshal(p)
+	b, _ := json.Marshal(resp)
 	return string(b)
+}
+
+// setupBulkPricingServer starts an httptest server serving bulk pricing JSON
+// and overrides aws.BulkPricingURLFormat for the duration of the test.
+func setupBulkPricingServer(t *testing.T, body string) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(body))
+	}))
+	t.Cleanup(ts.Close)
+	orig := aws.BulkPricingURLFormat
+	aws.BulkPricingURLFormat = ts.URL + "/%s"
+	t.Cleanup(func() { aws.BulkPricingURLFormat = orig })
 }
 
 func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savingsplansTypes.SavingsPlanOfferingRate {
@@ -623,7 +635,8 @@ func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savin
 
 func TestEndToEnd_OnDemandPricing(t *testing.T) {
 	setupInstancesServer(t)
-	pricingJSON := makePricingJSON("SKU001", "m5.large", "Linux", "0.096")
+	bulkJSON := makeBulkPricingJSON("SKU001", "m5.large", "Linux", "0.096")
+	setupBulkPricingServer(t, bulkJSON)
 
 	factory := &mockClientFactory{
 		ec2Client: &mockEC2Client{
@@ -632,13 +645,6 @@ func TestEndToEnd_OnDemandPricing(t *testing.T) {
 					AvailabilityZones: []ec2types.AvailabilityZone{
 						{ZoneName: awssdk.String("us-east-1a")},
 					},
-				}, nil
-			},
-		},
-		pricingClient: &mockPricingClient{
-			GetProductsFn: func(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error) {
-				return &pricing.GetProductsOutput{
-					PriceList: []string{pricingJSON},
 				}, nil
 			},
 		},

@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	"github.com/aws/aws-sdk-go-v2/service/pricing"
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	"github.com/prometheus/client_golang/prometheus"
 
@@ -27,15 +26,6 @@ func (m *mockEC2Client) DescribeAvailabilityZones(ctx context.Context, params *e
 	return m.DescribeAvailabilityZonesFn(ctx, params, optFns...)
 }
 
-// mockPricingClient implements pricing.GetProductsAPIClient for testing.
-type mockPricingClient struct {
-	GetProductsFn func(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error)
-}
-
-func (m *mockPricingClient) GetProducts(ctx context.Context, params *pricing.GetProductsInput, optFns ...func(*pricing.Options)) (*pricing.GetProductsOutput, error) {
-	return m.GetProductsFn(ctx, params, optFns...)
-}
-
 // mockSavingsPlansClient implements aws.SavingsPlansAPI for testing.
 type mockSavingsPlansClient struct {
 	DescribeSavingsPlansOfferingRatesFn func(ctx context.Context, params *savingsplans.DescribeSavingsPlansOfferingRatesInput, optFns ...func(*savingsplans.Options)) (*savingsplans.DescribeSavingsPlansOfferingRatesOutput, error)
@@ -47,20 +37,14 @@ func (m *mockSavingsPlansClient) DescribeSavingsPlansOfferingRates(ctx context.C
 
 // mockClientFactory implements aws.ClientFactory for testing.
 type mockClientFactory struct {
-	ec2Client     aws.EC2Client
-	ec2Err        error
-	pricingClient pricing.GetProductsAPIClient
-	pricingErr    error
-	spClient      aws.SavingsPlansAPI
-	spErr         error
+	ec2Client aws.EC2Client
+	ec2Err    error
+	spClient  aws.SavingsPlansAPI
+	spErr     error
 }
 
 func (f *mockClientFactory) NewEC2Client(region string) (aws.EC2Client, error) {
 	return f.ec2Client, f.ec2Err
-}
-
-func (f *mockClientFactory) NewPricingClient() (pricing.GetProductsAPIClient, error) {
-	return f.pricingClient, f.pricingErr
 }
 
 func (f *mockClientFactory) NewSavingsPlansClient() (aws.SavingsPlansAPI, error) {
