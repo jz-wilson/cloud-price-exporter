@@ -245,7 +245,7 @@ exporter/
     types.go                         AWS response types and constants
   azure/
     clients.go                       Azure client interfaces
-    factory.go                       Azure HTTP client factory
+    retail_client.go                 Azure HTTP client (Retail Prices API)
     ondemand.go                      Azure VM on-demand pricing scraper
     types.go                         Azure Retail Prices API response types
   provider/
