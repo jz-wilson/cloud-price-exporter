@@ -24,6 +24,7 @@ jobs:
       - name: Run tests before release
         run: go test -race -count=1 ./...
 
+      # ── Docker ────────────────────────────────────────────────────────────
       - name: Docker metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -44,7 +45,7 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -54,7 +55,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # ── Helm ──────────────────────────────────────────────────────────────
+      - uses: azure/setup-helm@v4
+
+      - name: Package Helm chart
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+          helm package . --version "$VERSION" --app-version "$VERSION"
+
+      - name: Push Helm chart to GHCR (OCI)
+        run: |
+          helm push cloud-price-exporter-*.tgz oci://ghcr.io/jz-wilson
+
+      # ── GitHub Release ────────────────────────────────────────────────────
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: cloud-price-exporter-*.tgz

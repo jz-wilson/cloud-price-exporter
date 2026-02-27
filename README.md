@@ -86,6 +86,13 @@ docker run -p 8080:8080 \
 ### Helm
 
 ```bash
+# From GHCR (OCI) — recommended
+helm install cloud-price-exporter \
+  oci://ghcr.io/jz-wilson/cloud-price-exporter \
+  --version 2.1.0 \
+  --set exporter.azure.regions=eastus
+
+# From local chart
 helm install cloud-price-exporter . \
   --set exporter.azure.regions=eastus
 ```
