@@ -43,6 +43,25 @@ exporter:
     # Comma-separated instance type regexes (empty = all)
     instanceRegexes: ""
 
+env: []
+
+startupProbe:
+  enabled: false
+  httpGet:
+    path: /
+    port: http-metrics
+  failureThreshold: 30
+  periodSeconds: 5
+
+sidecarWait:
+  enabled: false
+  url: "http://127.0.0.1:8081/latest/meta-data/"
+  maxAttempts: 30
+
+extraContainers: []
+extraVolumes: []
+extraVolumeMounts: []
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 10001
