@@ -11,7 +11,7 @@ RUN go test ./...
 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cloud-price-exporter .
 
-FROM alpine:3.21
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates && \
     adduser -D -u 10001 exporter
