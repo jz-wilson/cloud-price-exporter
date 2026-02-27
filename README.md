@@ -1,7 +1,7 @@
 # Cloud Price Exporter
 
 [![CI](https://github.com/jz-wilson/cloud-price-exporter/actions/workflows/ci.yml/badge.svg)](https://github.com/jz-wilson/cloud-price-exporter/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/jz-wilson/cloud-price-exporter?include_prereleases)](https://github.com/jz-wilson/cloud-price-exporter/releases/latest)
+[![Release](https://img.shields.io/github/v/release/jz-wilson/cloud-price-exporter)](https://github.com/jz-wilson/cloud-price-exporter/releases/latest)
 [![Go Version](https://img.shields.io/github/go-mod/go-version/jz-wilson/cloud-price-exporter)](https://go.dev/doc/install)
 [![Go Report Card](https://goreportcard.com/badge/github.com/jz-wilson/cloud-price-exporter)](https://goreportcard.com/report/github.com/jz-wilson/cloud-price-exporter)
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/jz-wilson/cloud-price-exporter/pkgs/container/cloud-price-exporter)
