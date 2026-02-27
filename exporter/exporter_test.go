@@ -111,12 +111,13 @@ func TestNewExporter_Success(t *testing.T) {
 	}
 }
 
-func TestNewExporter_FailsOnInstancesError(t *testing.T) {
+func TestNewExporter_DegracefullyOnInstancesError(t *testing.T) {
 	setupFailingInstancesServer(t)
 
 	factory := &mockClientFactory{}
 
-	_, err := NewExporter(
+	// Instance load failure should now be non-fatal — exporter starts with empty store
+	exp, err := NewExporter(
 		[]string{"Linux/UNIX"},
 		[]string{"Linux"},
 		[]string{"us-east-1"},
@@ -127,8 +128,11 @@ func TestNewExporter_FailsOnInstancesError(t *testing.T) {
 		factory,
 		nil,
 	)
-	if err == nil {
-		t.Fatal("expected error from NewExporter when instance loading fails")
+	if err != nil {
+		t.Fatalf("expected NewExporter to succeed despite instance load failure, got: %v", err)
+	}
+	if exp == nil {
+		t.Fatal("expected non-nil exporter")
 	}
 }
 

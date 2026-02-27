@@ -157,7 +157,8 @@ func validateNextPageLink(next, baseURL string) (string, error) {
 		return "", fmt.Errorf("invalid NextPageLink %q: %w", next, err)
 	}
 	base, _ := url.Parse(baseURL)
-	if u.Host != base.Host || u.Scheme != base.Scheme {
+	// Use Hostname() to strip any default port (e.g. :443) before comparing
+	if u.Hostname() != base.Hostname() || u.Scheme != base.Scheme {
 		return "", fmt.Errorf("NextPageLink host %q does not match expected %q", u.Host, base.Host)
 	}
 	return next, nil

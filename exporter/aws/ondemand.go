@@ -60,9 +60,8 @@ func GetOnDemandPricing(ctx context.Context, region string, ec2Client EC2Describ
 		var err error
 		azs, err = GetAZs(ctx, region, ec2Client)
 		if err != nil {
-			log.WithError(err).Errorf("error while fetching AZs [region=%s]", region)
-			atomic.AddUint64(errorCount, 1)
-			return
+			log.WithError(err).Warnf("could not fetch AZs for region %s, falling back to region-level granularity", region)
+			azs = []string{region}
 		}
 	} else {
 		azs = []string{region}

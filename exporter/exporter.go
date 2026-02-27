@@ -102,7 +102,7 @@ func NewExporter(pds []string, oss []string, regions []string, lifecycle []strin
 	// Only fetch AWS instances if AWS regions are configured
 	if len(regions) > 0 {
 		if err := e.instances.Load(context.Background(), nil); err != nil {
-			return nil, err
+			log.WithError(err).Warn("failed to load instance metadata from ec2instances.info — normalized vCPU/memory costs will be unavailable; pricing metrics will still be collected")
 		}
 	}
 
