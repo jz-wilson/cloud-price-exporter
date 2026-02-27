@@ -68,7 +68,7 @@ func (c *HTTPRetailPricesClient) GetVMPrices(ctx context.Context, region string,
 
 	nextURL := fmt.Sprintf("%s?$filter=%s", c.baseURL, url.QueryEscape(filter))
 
-	var results []RetailPriceItem
+	var results []RetailPriceItem //nolint:prealloc
 
 	for nextURL != "" {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
@@ -84,10 +84,10 @@ func (c *HTTPRetailPricesClient) GetVMPrices(ctx context.Context, region string,
 		var page RetailPriceResponse
 		err = json.NewDecoder(resp.Body).Decode(&page)
 		if err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("decoding Azure response: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		for _, item := range page.Items {
 			if item.UnitOfMeasure != "1 Hour" {
@@ -134,18 +134,18 @@ func (c *HTTPRetailPricesClient) doWithRetry(req *http.Request) (*http.Response,
 			continue
 		}
 		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
-			resp.Body.Close()
-			lastErr = fmt.Errorf("Azure API returned status %d", resp.StatusCode)
+			_ = resp.Body.Close()
+			lastErr = fmt.Errorf("azure API returned status %d", resp.StatusCode)
 			time.Sleep(time.Duration(1<<attempt) * delay)
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			resp.Body.Close()
-			return nil, fmt.Errorf("Azure API returned status %d", resp.StatusCode)
+			_ = resp.Body.Close()
+			return nil, fmt.Errorf("azure API returned status %d", resp.StatusCode)
 		}
 		return resp, nil
 	}
-	return nil, fmt.Errorf("Azure API failed after %d retries: %w", maxRetries, lastErr)
+	return nil, fmt.Errorf("azure API failed after %d retries: %w", maxRetries, lastErr)
 }
 
 func validateNextPageLink(next, baseURL string) (string, error) {

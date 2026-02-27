@@ -254,7 +254,8 @@ func (e *Exporter) setPricingMetrics(scrapes <-chan provider.ScrapeResult) {
 			continue
 		}
 		var labels prometheus.Labels
-		if name == "ec2" {
+		switch name {
+		case "ec2":
 			labels = map[string]string{
 				"instance_lifecycle":   scr.InstanceLifecycle,
 				"instance_type":        scr.InstanceType,
@@ -268,7 +269,7 @@ func (e *Exporter) setPricingMetrics(scrapes <-chan provider.ScrapeResult) {
 				"memory":               scr.Memory,
 				"vcpu":                 scr.VCpu,
 			}
-		} else if name == "ec2_memory" || name == "ec2_vcpu" {
+		case "ec2_memory", "ec2_vcpu":
 			labels = map[string]string{
 				"instance_lifecycle":   scr.InstanceLifecycle,
 				"instance_type":        scr.InstanceType,
@@ -278,7 +279,7 @@ func (e *Exporter) setPricingMetrics(scrapes <-chan provider.ScrapeResult) {
 				"saving_plan_duration": strconv.Itoa(scr.SavingPlanDuration),
 				"saving_plan_type":     scr.SavingPlanType,
 			}
-		} else if name == "azure_vm" {
+		case "azure_vm":
 			labels = map[string]string{
 				"instance_lifecycle": scr.InstanceLifecycle,
 				"instance_type":      scr.InstanceType,
