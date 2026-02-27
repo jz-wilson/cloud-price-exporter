@@ -56,3 +56,39 @@ Create the name of the service account to use.
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+CLI arguments for the exporter binary.
+Renders one flag per line (no leading dash prefix duplication).
+Used by deployment.yaml for both direct args and sidecarWait shell wrapper.
+*/}}
+{{- define "cloud-price-exporter.cliArgs" -}}
+-listen-address=:{{ .Values.service.port }}
+-log-level={{ .Values.exporter.logLevel }}
+-cache={{ .Values.exporter.cache }}
+{{- if .Values.exporter.instanceRegexes }}
+-instance-regexes={{ .Values.exporter.instanceRegexes }}
+{{- end }}
+-aws-enabled={{ .Values.exporter.aws.enabled }}
+{{- if .Values.exporter.aws.enabled }}
+-lifecycle={{ .Values.exporter.aws.lifecycle }}
+-product-descriptions={{ .Values.exporter.aws.productDescriptions }}
+-operating-systems={{ .Values.exporter.aws.operatingSystems }}
+{{- if .Values.exporter.aws.regions }}
+-regions={{ .Values.exporter.aws.regions }}
+{{- end }}
+{{- if .Values.exporter.aws.savingPlanTypes }}
+-saving-plan-types={{ .Values.exporter.aws.savingPlanTypes }}
+{{- end }}
+{{- end }}
+-azure-enabled={{ .Values.exporter.azure.enabled }}
+{{- if .Values.exporter.azure.enabled }}
+{{- if .Values.exporter.azure.regions }}
+-azure-regions={{ .Values.exporter.azure.regions }}
+{{- end }}
+-azure-operating-systems={{ .Values.exporter.azure.operatingSystems }}
+{{- if .Values.exporter.azure.instanceRegexes }}
+-azure-instance-regexes={{ .Values.exporter.azure.instanceRegexes }}
+{{- end }}
+{{- end }}
+{{- end -}}
