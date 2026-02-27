@@ -58,7 +58,7 @@ func (s *InstanceStore) Load(ctx context.Context, httpClient *http.Client) error
 	if err != nil {
 		return fmt.Errorf("error fetching instance data from %s: %w", url, err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("unexpected status %d fetching instance data from %s", resp.StatusCode, url)

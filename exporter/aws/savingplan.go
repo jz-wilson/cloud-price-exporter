@@ -131,7 +131,7 @@ func GetSavingPlanPricing(ctx context.Context, region string, client SavingsPlan
 }
 
 func convertSavingsPlanType(spt []string) []savingsplansTypes.SavingsPlanType {
-	result := make([]savingsplansTypes.SavingsPlanType, 0)
+	result := make([]savingsplansTypes.SavingsPlanType, 0, len(spt))
 
 	for _, v := range spt {
 		result = append(result, savingsplansTypes.SavingsPlanType(v))

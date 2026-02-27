@@ -86,7 +86,7 @@ func GetOnDemandPricing(ctx context.Context, region string, ec2Client EC2Describ
 		atomic.AddUint64(errorCount, 1)
 		return
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
 		log.Errorf("bulk pricing API returned status %d [region=%s]", resp.StatusCode, region)
