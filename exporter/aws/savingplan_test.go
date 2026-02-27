@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savingsplansTypes.SavingsPlanOfferingRate {

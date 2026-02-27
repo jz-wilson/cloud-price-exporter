@@ -10,7 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 func TestGetSpotPricing_SinglePage(t *testing.T) {

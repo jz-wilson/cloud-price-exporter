@@ -8,7 +8,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/aws"
 )
 
 // TestIntegration_SpotPricing runs a real scrape against AWS APIs.

@@ -11,9 +11,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/aws"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/azure"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 // AzureConfig holds configuration for Azure VM pricing scraping.

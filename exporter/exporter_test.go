@@ -19,9 +19,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/aws"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/azure"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 // instancesJSON is a small fake response for ec2instances.info used by tests

@@ -23,7 +23,7 @@ linters-settings:
     enable:
       - shadow
   goimports:
-    local-prefixes: github.com/pixelfederation/cloud-price-exporter
+    local-prefixes: github.com/jz-wilson/cloud-price-exporter
   errcheck:
     exclude-functions:
       - (net/http.ResponseWriter).Write

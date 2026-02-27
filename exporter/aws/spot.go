@@ -11,7 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 // GetSpotPricing fetches spot prices for a region and sends results to scrapes.

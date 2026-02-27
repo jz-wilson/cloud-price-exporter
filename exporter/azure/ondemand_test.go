@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 func TestGetOnDemandPricing_SingleRegion(t *testing.T) {

@@ -1,4 +1,4 @@
-module github.com/pixelfederation/cloud-price-exporter
+module github.com/jz-wilson/cloud-price-exporter
 
 go 1.25.0
 

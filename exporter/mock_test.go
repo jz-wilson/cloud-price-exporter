@@ -8,8 +8,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/aws"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/azure"
 )
 
 // mockEC2Client implements aws.EC2Client for testing.

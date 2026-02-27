@@ -12,7 +12,7 @@ import (
 	savingsplansTypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 type savingPlanProperties struct {

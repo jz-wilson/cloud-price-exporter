@@ -20,9 +20,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
-	"github.com/pixelfederation/cloud-price-exporter/exporter/azure"
+	"github.com/jz-wilson/cloud-price-exporter/exporter"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/aws"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/azure"
 )
 
 var (

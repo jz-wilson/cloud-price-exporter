@@ -14,7 +14,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	log "github.com/sirupsen/logrus"
 
-	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
 )
 
 // BulkPricingURLFormat is the URL template for the AWS public bulk pricing endpoint.
@@ -41,7 +41,7 @@ type BulkTerms struct {
 
 // BulkOfferTerm represents a single offer term in the bulk pricing JSON.
 type BulkOfferTerm struct {
-	OfferTermCode   string                         `json:"offerTermCode"`
+	OfferTermCode   string                        `json:"offerTermCode"`
 	PriceDimensions map[string]BulkPriceDimension `json:"priceDimensions"`
 }
 

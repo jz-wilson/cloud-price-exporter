@@ -1,6 +1,6 @@
 package exporter
 
-import "github.com/pixelfederation/cloud-price-exporter/exporter/aws"
+import "github.com/jz-wilson/cloud-price-exporter/exporter/aws"
 
 // newTestInstanceStore creates a pre-populated InstanceStore for testing.
 // This uses the exported NewInstanceStoreFromMap constructor.
