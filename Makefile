@@ -9,7 +9,7 @@ build: ## Build the binary
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-w -s" -o $(BINARY_NAME) .
 
 test: ## Run unit tests with race detection
-	$(GO) test -race ./...
+	$(GO) test -race -count=1 -v ./...
 
 test-integration: ## Run integration tests
 	$(GO) test -tags integration -v ./exporter/
