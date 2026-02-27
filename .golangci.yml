@@ -11,8 +11,6 @@ linters:
     - staticcheck
     - unused
     - ineffassign
-    - gofmt
-    - goimports
     - bodyclose
     - misspell
     - nilerr
@@ -36,6 +34,15 @@ linters:
         - style
         - opinionated
         - performance
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/jz-wilson/cloud-price-exporter
 
 issues:
   max-issues-per-linter: 50
