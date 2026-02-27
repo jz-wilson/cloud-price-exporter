@@ -7,6 +7,8 @@ RUN go mod download
 
 COPY . .
 
+RUN go test ./...
+
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-w -s" -o cloud-price-exporter .
 
 FROM alpine:3.21

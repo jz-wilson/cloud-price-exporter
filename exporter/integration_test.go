@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus"
+
+	"github.com/pixelfederation/cloud-price-exporter/exporter/aws"
 )
 
 // TestIntegration_SpotPricing runs a real scrape against AWS APIs.
@@ -14,7 +16,7 @@ import (
 //
 // Run with: go test -tags=integration -run TestIntegration -v ./exporter/
 func TestIntegration_SpotPricing(t *testing.T) {
-	factory := &AWSClientFactory{}
+	factory := &aws.SDKClientFactory{}
 
 	exp, err := NewExporter(
 		[]string{"Linux/UNIX"},
