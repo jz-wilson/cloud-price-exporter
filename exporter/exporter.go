@@ -2,7 +2,6 @@ package exporter
 
 import (
 	"context"
-	"fmt"
 	"regexp"
 	"strconv"
 	"sync"
@@ -102,11 +101,7 @@ func NewExporter(pds []string, oss []string, regions []string, lifecycle []strin
 
 	// Only fetch AWS instances if AWS regions are configured
 	if len(regions) > 0 {
-		ec2Client, err := e.clientFactory.NewEC2Client("us-east-1")
-		if err != nil {
-			return nil, fmt.Errorf("failed to create EC2 client: %w", err)
-		}
-		if err := e.instances.Load(context.Background(), ec2Client); err != nil {
+		if err := e.instances.Load(context.Background(), nil); err != nil {
 			return nil, err
 		}
 	}

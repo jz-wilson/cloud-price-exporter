@@ -8,6 +8,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 )
 
+// NOTE: ec2.DescribeInstanceTypesAPIClient was removed from EC2Client because
+// instance type data is now fetched from ec2instances.info via HTTP, not the
+// AWS DescribeInstanceTypes API.
+
 // EC2DescribeAZsAPI wraps the DescribeAvailabilityZones call (no SDK paginator interface exists).
 type EC2DescribeAZsAPI interface {
 	DescribeAvailabilityZones(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error)
@@ -21,7 +25,6 @@ type SavingsPlansAPI interface {
 // EC2Client combines the EC2 API interfaces needed by this exporter.
 type EC2Client interface {
 	ec2.DescribeSpotPriceHistoryAPIClient
-	ec2.DescribeInstanceTypesAPIClient
 	EC2DescribeAZsAPI
 }
 

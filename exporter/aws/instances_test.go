@@ -2,37 +2,29 @@ package aws
 
 import (
 	"context"
-	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
-
-	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
-	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 )
 
+func newTestServer(handler http.HandlerFunc) *httptest.Server {
+	return httptest.NewServer(handler)
+}
+
 func TestInstanceStore_Load_Success(t *testing.T) {
-	client := &mockEC2Client{
-		DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
-			return &ec2.DescribeInstanceTypesOutput{
-				InstanceTypes: []ec2types.InstanceTypeInfo{
-					{
-						InstanceType: ec2types.InstanceTypeM5Large,
-						MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
-						VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
-					},
-					{
-						InstanceType: ec2types.InstanceTypeM5Xlarge,
-						MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(16384)},
-						VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(4)},
-					},
-				},
-			}, nil
-		},
-	}
+	ts := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[
+			{"instance_type": "m5.large",  "vcpu": 2, "memory": 8.0},
+			{"instance_type": "m5.xlarge", "vcpu": 4, "memory": 16.0}
+		]`))
+	})
+	defer ts.Close()
 
 	store := NewInstanceStore()
-	err := store.Load(context.Background(), client)
+	store.url = ts.URL
+	err := store.Load(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,19 +39,79 @@ func TestInstanceStore_Load_Success(t *testing.T) {
 	if got := store.GetVCpu("m5.large"); got != "2" {
 		t.Errorf("m5.large vcpu: expected 2, got %s", got)
 	}
+	if got := store.GetMemory("m5.xlarge"); got != "16384" {
+		t.Errorf("m5.xlarge memory: expected 16384, got %s", got)
+	}
+	if got := store.GetVCpu("m5.xlarge"); got != "4" {
+		t.Errorf("m5.xlarge vcpu: expected 4, got %s", got)
+	}
 }
 
-func TestInstanceStore_Load_APIError(t *testing.T) {
-	client := &mockEC2Client{
-		DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
-			return nil, fmt.Errorf("access denied")
-		},
-	}
+func TestInstanceStore_Load_HTTPError(t *testing.T) {
+	ts := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	defer ts.Close()
 
 	store := NewInstanceStore()
-	err := store.Load(context.Background(), client)
+	store.url = ts.URL
+	err := store.Load(context.Background(), nil)
 	if err == nil {
-		t.Fatal("expected error from Load, got nil")
+		t.Fatal("expected error from Load on HTTP 500, got nil")
+	}
+}
+
+func TestInstanceStore_Load_BadJSON(t *testing.T) {
+	ts := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`not valid json`))
+	})
+	defer ts.Close()
+
+	store := NewInstanceStore()
+	store.url = ts.URL
+	err := store.Load(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error from Load on bad JSON, got nil")
+	}
+}
+
+func TestInstanceStore_Load_EmptyResponse(t *testing.T) {
+	ts := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[]`))
+	})
+	defer ts.Close()
+
+	store := NewInstanceStore()
+	store.url = ts.URL
+	err := store.Load(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.Len() != 0 {
+		t.Errorf("expected 0 instances, got %d", store.Len())
+	}
+}
+
+func TestInstanceStore_Load_CustomHTTPClient(t *testing.T) {
+	ts := newTestServer(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"instance_type": "t3.micro", "vcpu": 2, "memory": 1.0}]`))
+	})
+	defer ts.Close()
+
+	store := NewInstanceStore()
+	store.url = ts.URL
+	err := store.Load(context.Background(), ts.Client())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if store.Len() != 1 {
+		t.Fatalf("expected 1 instance, got %d", store.Len())
+	}
+	if got := store.GetMemory("t3.micro"); got != "1024" {
+		t.Errorf("t3.micro memory: expected 1024, got %s", got)
 	}
 }
 

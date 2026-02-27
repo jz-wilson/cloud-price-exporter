@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"sync"
 	"testing"
@@ -23,20 +25,39 @@ import (
 	"github.com/pixelfederation/cloud-price-exporter/exporter/provider"
 )
 
+// instancesJSON is a small fake response for ec2instances.info used by tests
+// that go through the NewExporter constructor (which calls InstanceStore.Load).
+const instancesJSON = `[{"instance_type":"m5.large","vcpu":2,"memory":8.0}]`
+
+// setupInstancesServer starts an httptest server that serves fake instance data
+// and overrides aws.EC2InstancesInfoURL for the duration of the test.
+func setupInstancesServer(t *testing.T) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(instancesJSON))
+	}))
+	t.Cleanup(ts.Close)
+	orig := aws.EC2InstancesInfoURL
+	aws.EC2InstancesInfoURL = ts.URL
+	t.Cleanup(func() { aws.EC2InstancesInfoURL = orig })
+}
+
+// setupFailingInstancesServer starts an httptest server that always returns 500.
+func setupFailingInstancesServer(t *testing.T) {
+	t.Helper()
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(ts.Close)
+	orig := aws.EC2InstancesInfoURL
+	aws.EC2InstancesInfoURL = ts.URL
+	t.Cleanup(func() { aws.EC2InstancesInfoURL = orig })
+}
+
 func newMockFactoryWithInstances() *mockClientFactory {
 	return &mockClientFactory{
 		ec2Client: &mockEC2Client{
-			DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
-				return &ec2.DescribeInstanceTypesOutput{
-					InstanceTypes: []ec2types.InstanceTypeInfo{
-						{
-							InstanceType: ec2types.InstanceTypeM5Large,
-							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
-							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
-						},
-					},
-				}, nil
-			},
 			DescribeSpotPriceHistoryFn: func(ctx context.Context, params *ec2.DescribeSpotPriceHistoryInput, optFns ...func(*ec2.Options)) (*ec2.DescribeSpotPriceHistoryOutput, error) {
 				return &ec2.DescribeSpotPriceHistoryOutput{
 					SpotPriceHistory: []ec2types.SpotPrice{
@@ -71,6 +92,7 @@ func newMockFactoryWithInstances() *mockClientFactory {
 }
 
 func TestNewExporter_Success(t *testing.T) {
+	setupInstancesServer(t)
 	factory := newMockFactoryWithInstances()
 
 	exp, err := NewExporter(
@@ -96,13 +118,9 @@ func TestNewExporter_Success(t *testing.T) {
 }
 
 func TestNewExporter_FailsOnInstancesError(t *testing.T) {
-	factory := &mockClientFactory{
-		ec2Client: &mockEC2Client{
-			DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
-				return nil, fmt.Errorf("no permissions")
-			},
-		},
-	}
+	setupFailingInstancesServer(t)
+
+	factory := &mockClientFactory{}
 
 	_, err := NewExporter(
 		[]string{"Linux/UNIX"},
@@ -116,28 +134,7 @@ func TestNewExporter_FailsOnInstancesError(t *testing.T) {
 		nil,
 	)
 	if err == nil {
-		t.Fatal("expected error from NewExporter when getInstances fails")
-	}
-}
-
-func TestNewExporter_FailsOnEC2ClientCreation(t *testing.T) {
-	factory := &mockClientFactory{
-		ec2Err: fmt.Errorf("failed to load config"),
-	}
-
-	_, err := NewExporter(
-		[]string{"Linux/UNIX"},
-		[]string{"Linux"},
-		[]string{"us-east-1"},
-		[]string{"spot"},
-		300,
-		[]*regexp.Regexp{regexp.MustCompile(".*")},
-		[]string{},
-		factory,
-		nil,
-	)
-	if err == nil {
-		t.Fatal("expected error when EC2 client creation fails")
+		t.Fatal("expected error from NewExporter when instance loading fails")
 	}
 }
 
@@ -526,6 +523,7 @@ func hasLabelValue(family *dto.MetricFamily, label, value string) bool {
 }
 
 func TestEndToEnd_SpotPricing(t *testing.T) {
+	setupInstancesServer(t)
 	factory := newMockFactoryWithInstances()
 
 	exp, err := NewExporter(
@@ -624,21 +622,11 @@ func makeSavingsPlanRate(instanceType, rate string, durationSeconds int64) savin
 }
 
 func TestEndToEnd_OnDemandPricing(t *testing.T) {
+	setupInstancesServer(t)
 	pricingJSON := makePricingJSON("SKU001", "m5.large", "Linux", "0.096")
 
 	factory := &mockClientFactory{
 		ec2Client: &mockEC2Client{
-			DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
-				return &ec2.DescribeInstanceTypesOutput{
-					InstanceTypes: []ec2types.InstanceTypeInfo{
-						{
-							InstanceType: ec2types.InstanceTypeM5Large,
-							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
-							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
-						},
-					},
-				}, nil
-			},
 			DescribeAvailabilityZonesFn: func(ctx context.Context, params *ec2.DescribeAvailabilityZonesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeAvailabilityZonesOutput, error) {
 				return &ec2.DescribeAvailabilityZonesOutput{
 					AvailabilityZones: []ec2types.AvailabilityZone{
@@ -692,20 +680,10 @@ func TestEndToEnd_OnDemandPricing(t *testing.T) {
 }
 
 func TestEndToEnd_SavingsPlanPricing(t *testing.T) {
+	setupInstancesServer(t)
+
 	factory := &mockClientFactory{
-		ec2Client: &mockEC2Client{
-			DescribeInstanceTypesFn: func(ctx context.Context, params *ec2.DescribeInstanceTypesInput, optFns ...func(*ec2.Options)) (*ec2.DescribeInstanceTypesOutput, error) {
-				return &ec2.DescribeInstanceTypesOutput{
-					InstanceTypes: []ec2types.InstanceTypeInfo{
-						{
-							InstanceType: ec2types.InstanceTypeM5Large,
-							MemoryInfo:   &ec2types.MemoryInfo{SizeInMiB: awssdk.Int64(8192)},
-							VCpuInfo:     &ec2types.VCpuInfo{DefaultVCpus: awssdk.Int32(2)},
-						},
-					},
-				}, nil
-			},
-		},
+		ec2Client: &mockEC2Client{},
 		spClient: &mockSavingsPlansClient{
 			DescribeSavingsPlansOfferingRatesFn: func(ctx context.Context, params *savingsplans.DescribeSavingsPlansOfferingRatesInput, optFns ...func(*savingsplans.Options)) (*savingsplans.DescribeSavingsPlansOfferingRatesOutput, error) {
 				return &savingsplans.DescribeSavingsPlansOfferingRatesOutput{

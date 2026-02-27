@@ -2,17 +2,29 @@ package aws
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"strconv"
 
-	awssdk "github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	log "github.com/sirupsen/logrus"
 )
+
+// EC2InstancesInfoURL is the default URL to fetch EC2 instance type data from.
+// Exported so tests in other packages can override it.
+var EC2InstancesInfoURL = "https://ec2instances.info/instances.json"
+
+// ec2InstanceInfo represents a single entry from the ec2instances.info JSON API.
+type ec2InstanceInfo struct {
+	InstanceType string  `json:"instance_type"`
+	VCpu         int     `json:"vcpu"`
+	Memory       float64 `json:"memory"` // GiB
+}
 
 // InstanceStore caches EC2 instance type specifications (vCPU, memory).
 type InstanceStore struct {
 	instances map[string]Instance
+	url       string // override URL for testing; empty = use EC2InstancesInfoURL
 }
 
 // NewInstanceStore returns an empty InstanceStore.
@@ -25,30 +37,43 @@ func NewInstanceStoreFromMap(instances map[string]Instance) *InstanceStore {
 	return &InstanceStore{instances: instances}
 }
 
-// Load fetches all instance types from EC2 and populates the store.
-func (s *InstanceStore) Load(ctx context.Context, client ec2.DescribeInstanceTypesAPIClient) error {
-	s.instances = make(map[string]Instance)
-	pag := ec2.NewDescribeInstanceTypesPaginator(
-		client,
-		&ec2.DescribeInstanceTypesInput{})
-	for pag.HasMorePages() {
-		instances, err := pag.NextPage(ctx)
-		if err != nil {
-			return fmt.Errorf("error fetching available instance types: %w", err)
-		}
-		for _, instance := range instances.InstanceTypes {
-			var memMiB int64
-			if instance.MemoryInfo != nil {
-				memMiB = awssdk.ToInt64(instance.MemoryInfo.SizeInMiB)
-			}
-			var vcpus int32
-			if instance.VCpuInfo != nil {
-				vcpus = awssdk.ToInt32(instance.VCpuInfo.DefaultVCpus)
-			}
-			s.instances[string(instance.InstanceType)] = Instance{
-				Memory: memMiB,
-				VCpu:   vcpus,
-			}
+// Load fetches all instance types from ec2instances.info and populates the store.
+// Pass nil for httpClient to use http.DefaultClient.
+func (s *InstanceStore) Load(ctx context.Context, httpClient *http.Client) error {
+	if httpClient == nil {
+		httpClient = http.DefaultClient
+	}
+
+	url := s.url
+	if url == "" {
+		url = EC2InstancesInfoURL
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("error creating request for instance data: %w", err)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("error fetching instance data from %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("unexpected status %d fetching instance data from %s", resp.StatusCode, url)
+	}
+
+	var items []ec2InstanceInfo
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		return fmt.Errorf("error parsing instance data: %w", err)
+	}
+
+	s.instances = make(map[string]Instance, len(items))
+	for _, item := range items {
+		s.instances[item.InstanceType] = Instance{
+			Memory: int64(item.Memory * 1024), // GiB -> MiB
+			VCpu:   int32(item.VCpu),
 		}
 	}
 
