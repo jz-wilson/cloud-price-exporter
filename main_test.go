@@ -68,48 +68,75 @@ func TestCompileRegexes_Empty(t *testing.T) {
 	}
 }
 
-func TestValidateProductDesc_AllValid(t *testing.T) {
-	valid := []string{"Linux/UNIX", "SUSE Linux", "Windows", "Linux/UNIX (Amazon VPC)", "SUSE Linux (Amazon VPC)", "Windows (Amazon VPC)"}
-	if err := validateProductDesc(valid); err != nil {
-		t.Errorf("unexpected error for valid descriptions: %v", err)
+func TestValidateProductDesc(t *testing.T) {
+	valid := []struct{ name, desc string }{
+		{"Linux/UNIX", "Linux/UNIX"},
+		{"Linux/UNIX VPC", "Linux/UNIX (Amazon VPC)"},
+		{"SUSE Linux", "SUSE Linux"},
+		{"SUSE Linux VPC", "SUSE Linux (Amazon VPC)"},
+		{"Windows", "Windows"},
+		{"Windows VPC", "Windows (Amazon VPC)"},
+	}
+	for _, tt := range valid {
+		t.Run("valid/"+tt.name, func(t *testing.T) {
+			if err := validateProductDesc([]string{tt.desc}); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+
+	invalid := []string{"InvalidOS", "ubuntu", "Red Hat", ""}
+	for _, desc := range invalid {
+		t.Run("invalid/"+desc, func(t *testing.T) {
+			if err := validateProductDesc([]string{desc}); err == nil {
+				t.Errorf("expected error for %q, got nil", desc)
+			}
+		})
 	}
 }
 
-func TestValidateProductDesc_Invalid(t *testing.T) {
-	if err := validateProductDesc([]string{"InvalidOS"}); err == nil {
-		t.Error("expected error for invalid product description")
-	}
-}
-
-func TestValidateOperatingSystems_AllValid(t *testing.T) {
+func TestValidateOperatingSystems(t *testing.T) {
 	valid := []string{"Linux", "RHEL", "SUSE", "Windows"}
-	if err := validateOperatingSystems(valid); err != nil {
-		t.Errorf("unexpected error for valid OS: %v", err)
+	for _, os := range valid {
+		t.Run("valid/"+os, func(t *testing.T) {
+			if err := validateOperatingSystems([]string{os}); err != nil {
+				t.Errorf("unexpected error for %q: %v", os, err)
+			}
+		})
+	}
+
+	invalid := []string{"macOS", "Ubuntu", "CentOS", ""}
+	for _, os := range invalid {
+		t.Run("invalid/"+os, func(t *testing.T) {
+			if err := validateOperatingSystems([]string{os}); err == nil {
+				t.Errorf("expected error for %q, got nil", os)
+			}
+		})
 	}
 }
 
-func TestValidateOperatingSystems_Invalid(t *testing.T) {
-	if err := validateOperatingSystems([]string{"macOS"}); err == nil {
-		t.Error("expected error for invalid operating system")
+func TestValidateSavingPlanTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{name: "Compute", input: "Compute"},
+		{name: "EC2Instance", input: "EC2Instance"},
+		{name: "SageMaker", input: "SageMaker"},
+		{name: "empty string (means none)", input: ""},    // allowed
+		{name: "invalid", input: "InvalidPlan", wantErr: true},
+		{name: "spot (not a plan type)", input: "spot", wantErr: true},
 	}
-}
-
-func TestValidateSavingPlanTypes_AllValid(t *testing.T) {
-	valid := []string{"Compute", "EC2Instance", "SageMaker"}
-	if err := validateSavingPlanTypes(valid); err != nil {
-		t.Errorf("unexpected error for valid plan types: %v", err)
-	}
-}
-
-func TestValidateSavingPlanTypes_Empty(t *testing.T) {
-	// Empty string is allowed (means "none")
-	if err := validateSavingPlanTypes([]string{""}); err != nil {
-		t.Errorf("unexpected error for empty plan type: %v", err)
-	}
-}
-
-func TestValidateSavingPlanTypes_Invalid(t *testing.T) {
-	if err := validateSavingPlanTypes([]string{"InvalidPlan"}); err == nil {
-		t.Error("expected error for invalid saving plan type")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateSavingPlanTypes([]string{tt.input})
+			if tt.wantErr && err == nil {
+				t.Errorf("expected error for %q, got nil", tt.input)
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error for %q: %v", tt.input, err)
+			}
+		})
 	}
 }

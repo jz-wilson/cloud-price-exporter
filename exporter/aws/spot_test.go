@@ -37,27 +37,34 @@ func TestGetSpotPricing_SinglePage(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
-
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
+	results := drainScrapes(t, scrapes)
 
 	// 2 instances × 3 metrics (ec2, ec2_memory, ec2_vcpu) = 6 results
-	if len(results) != 6 {
-		t.Fatalf("expected 6 scrape results, got %d", len(results))
+	requireScrapeCount(t, results, 6)
+
+	// Verify every result has spot lifecycle and correct region
+	for i, r := range results {
+		if r.InstanceLifecycle != "spot" {
+			t.Errorf("results[%d]: expected lifecycle=spot, got %q", i, r.InstanceLifecycle)
+		}
+		if r.Region != "us-east-1" {
+			t.Errorf("results[%d]: expected region=us-east-1, got %q", i, r.Region)
+		}
 	}
 
-	// Verify first instance ec2 metric
-	if results[0].Name != "ec2" || results[0].Value != 0.05 || results[0].InstanceType != "m5.large" {
-		t.Errorf("unexpected first result: %+v", results[0])
+	// Verify the ec2 metric for the first instance
+	ec2Results := scrapesByName(results, "ec2")
+	if len(ec2Results) != 2 {
+		t.Fatalf("expected 2 ec2 metrics, got %d", len(ec2Results))
 	}
-	if results[0].InstanceLifecycle != "spot" {
-		t.Errorf("expected lifecycle=spot, got %s", results[0].InstanceLifecycle)
+	if ec2Results[0].InstanceType != "m5.large" || ec2Results[0].Value != 0.05 {
+		t.Errorf("first ec2: want instance=m5.large value=0.05, got instance=%s value=%v", ec2Results[0].InstanceType, ec2Results[0].Value)
+	}
+	if ec2Results[1].InstanceType != "m5.xlarge" || ec2Results[1].Value != 0.10 {
+		t.Errorf("second ec2: want instance=m5.xlarge value=0.10, got instance=%s value=%v", ec2Results[1].InstanceType, ec2Results[1].Value)
 	}
 }
 
@@ -94,22 +101,14 @@ func TestGetSpotPricing_MultiplePages(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
+	results := drainScrapes(t, scrapes)
 
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
-
-	// 2 pages × 1 instance × 3 metrics = 6 results
-	if len(results) != 6 {
-		t.Fatalf("expected 6 scrape results, got %d", len(results))
-	}
+	requireScrapeCount(t, results, 6) // 2 pages × 1 instance × 3 metrics
 	if callCount != 2 {
-		t.Errorf("expected 2 API calls, got %d", callCount)
+		t.Errorf("expected 2 API calls for pagination, got %d", callCount)
 	}
 }
 
@@ -122,19 +121,12 @@ func TestGetSpotPricing_APIError(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
+	results := drainScrapes(t, scrapes)
 
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
-
-	if len(results) != 0 {
-		t.Errorf("expected 0 results on error, got %d", len(results))
-	}
+	requireScrapeCount(t, results, 0)
 	if errorCount != 1 {
 		t.Errorf("expected errorCount=1, got %d", errorCount)
 	}
@@ -164,23 +156,17 @@ func TestGetSpotPricing_InstanceRegexFilter(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
-	// Only match m5.* instances
 	scrapes := make(chan provider.ScrapeResult, 100)
+	// Only match m5.* — c5.xlarge must be filtered out
 	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(`^m5\.`)}, instances, &errorCount, scrapes)
 	close(scrapes)
+	results := drainScrapes(t, scrapes)
 
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
-
-	// Only m5.large matches, c5.xlarge filtered out → 3 results
-	if len(results) != 3 {
-		t.Fatalf("expected 3 scrape results (m5.large only), got %d", len(results))
-	}
-	if results[0].InstanceType != "m5.large" {
-		t.Errorf("expected m5.large, got %s", results[0].InstanceType)
+	requireScrapeCount(t, results, 3) // m5.large only × 3 metrics
+	for _, r := range results {
+		if r.InstanceType != "m5.large" {
+			t.Errorf("expected only m5.large results, got %q", r.InstanceType)
+		}
 	}
 }
 
@@ -193,20 +179,24 @@ func TestGetSpotPricing_EmptyResponse(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetSpotPricing(context.Background(), "us-east-1", client, []string{"Linux/UNIX"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
+	results := drainScrapes(t, scrapes)
 
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
-
-	if len(results) != 0 {
-		t.Errorf("expected 0 results for empty response, got %d", len(results))
-	}
+	requireScrapeCount(t, results, 0)
 	if errorCount != 0 {
-		t.Errorf("expected errorCount=0, got %d", errorCount)
+		t.Errorf("expected no errors for empty response, got %d", errorCount)
 	}
+}
+
+// scrapesByName filters results to those with a matching Name field.
+func scrapesByName(results []provider.ScrapeResult, name string) []provider.ScrapeResult {
+	var out []provider.ScrapeResult
+	for _, r := range results {
+		if r.Name == name {
+			out = append(out, r)
+		}
+	}
+	return out
 }

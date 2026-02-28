@@ -1,6 +1,29 @@
 package azure
 
-import "context"
+import (
+	"context"
+	"testing"
+
+	"github.com/jz-wilson/cloud-price-exporter/exporter/provider"
+)
+
+// drainScrapes collects all results from a closed ScrapeResult channel.
+func drainScrapes(t *testing.T, ch <-chan provider.ScrapeResult) []provider.ScrapeResult {
+	t.Helper()
+	var results []provider.ScrapeResult
+	for r := range ch {
+		results = append(results, r)
+	}
+	return results
+}
+
+// requireScrapeCount fatally fails if the result count doesn't match expected.
+func requireScrapeCount(t *testing.T, results []provider.ScrapeResult, want int) {
+	t.Helper()
+	if len(results) != want {
+		t.Fatalf("expected %d scrape results, got %d", want, len(results))
+	}
+}
 
 // mockRetailPricesClient implements RetailPricesClient for testing.
 type mockRetailPricesClient struct {

@@ -89,29 +89,37 @@ func TestGetOnDemandPricing_SinglePage(t *testing.T) {
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
-
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
+	results := drainScrapes(t, scrapes)
 
 	// 1 instance × 2 AZs × 3 metrics = 6 results
-	if len(results) != 6 {
-		t.Fatalf("expected 6 scrape results, got %d", len(results))
+	requireScrapeCount(t, results, 6)
+
+	// Verify all results share common expected fields
+	for i, r := range results {
+		if r.InstanceLifecycle != "ondemand" {
+			t.Errorf("results[%d]: expected lifecycle=ondemand, got %q", i, r.InstanceLifecycle)
+		}
+		if r.Region != "us-east-1" {
+			t.Errorf("results[%d]: expected region=us-east-1, got %q", i, r.Region)
+		}
+		if r.InstanceType != "m5.large" {
+			t.Errorf("results[%d]: expected instance=m5.large, got %q", i, r.InstanceType)
+		}
 	}
 
-	// Verify first result
-	if results[0].Name != "ec2" {
-		t.Errorf("expected name=ec2, got %s", results[0].Name)
+	// Verify ec2 metric values per AZ
+	ec2Results := scrapesByName(results, "ec2")
+	if len(ec2Results) != 2 {
+		t.Fatalf("expected 2 ec2 metrics (1 per AZ), got %d", len(ec2Results))
 	}
-	if results[0].Value != 0.096 {
-		t.Errorf("expected value=0.096, got %v", results[0].Value)
+	for _, r := range ec2Results {
+		if r.Value != 0.096 {
+			t.Errorf("ec2 AZ=%s: expected value=0.096, got %v", r.AvailabilityZone, r.Value)
+		}
 	}
-	if results[0].InstanceLifecycle != "ondemand" {
-		t.Errorf("expected lifecycle=ondemand, got %s", results[0].InstanceLifecycle)
-	}
-	if results[0].AvailabilityZone != "us-east-1a" {
-		t.Errorf("expected AZ=us-east-1a, got %s", results[0].AvailabilityZone)
+	azs := map[string]bool{ec2Results[0].AvailabilityZone: true, ec2Results[1].AvailabilityZone: true}
+	if !azs["us-east-1a"] || !azs["us-east-1b"] {
+		t.Errorf("expected AZs us-east-1a and us-east-1b, got %v", azs)
 	}
 }
 
@@ -130,19 +138,12 @@ func TestGetOnDemandPricing_HTTPError(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
+	results := drainScrapes(t, scrapes)
 
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
-
-	if len(results) != 0 {
-		t.Errorf("expected 0 results on HTTP error, got %d", len(results))
-	}
+	requireScrapeCount(t, results, 0)
 	if errorCount == 0 {
 		t.Error("expected errorCount to be incremented on HTTP error")
 	}
@@ -169,19 +170,11 @@ func TestGetOnDemandPricing_EmptyResults(t *testing.T) {
 
 	instances := testInstanceStore()
 	var errorCount uint64
-
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetOnDemandPricing(context.Background(), "us-east-1", ec2Client, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
 
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
-
-	if len(results) != 0 {
-		t.Errorf("expected 0 results for empty pricing, got %d", len(results))
-	}
+	requireScrapeCount(t, drainScrapes(t, scrapes), 0)
 }
 
 func TestGetOnDemandPricing_NilEC2Client(t *testing.T) {
@@ -194,18 +187,14 @@ func TestGetOnDemandPricing_NilEC2Client(t *testing.T) {
 	scrapes := make(chan provider.ScrapeResult, 100)
 	GetOnDemandPricing(context.Background(), "us-east-1", nil, nil, []string{"Linux"}, []*regexp.Regexp{regexp.MustCompile(".*")}, instances, &errorCount, scrapes)
 	close(scrapes)
-
-	results := make([]provider.ScrapeResult, 0, len(scrapes))
-	for r := range scrapes {
-		results = append(results, r)
-	}
+	results := drainScrapes(t, scrapes)
 
 	// 1 instance × 1 AZ (region fallback) × 3 metrics = 3 results
-	if len(results) != 3 {
-		t.Fatalf("expected 3 scrape results with nil ec2Client, got %d", len(results))
-	}
-	if results[0].AvailabilityZone != "us-east-1" {
-		t.Errorf("expected AZ=us-east-1 (region fallback), got %s", results[0].AvailabilityZone)
+	requireScrapeCount(t, results, 3)
+	for _, r := range results {
+		if r.AvailabilityZone != "us-east-1" {
+			t.Errorf("expected AZ=us-east-1 (region fallback), got %q", r.AvailabilityZone)
+		}
 	}
 }
 

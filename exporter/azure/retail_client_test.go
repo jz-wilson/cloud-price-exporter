@@ -135,6 +135,64 @@ func TestHTTPClient_FiltersSpotAndLowPriority(t *testing.T) {
 	}
 }
 
+func TestHTTPClient_RetriesOnTransientError(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		resp := RetailPriceResponse{
+			Items: []RetailPriceItem{
+				{RetailPrice: 0.096, ArmSkuName: "Standard_D2s_v5", MeterName: "D2s v5", UnitOfMeasure: "1 Hour"},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	client := &HTTPRetailPricesClient{
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
+	}
+
+	items, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})
+	if err != nil {
+		t.Fatalf("expected retry to succeed on third attempt, got error: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("expected 1 item after successful retry, got %d", len(items))
+	}
+	if callCount != 3 {
+		t.Errorf("expected 3 HTTP calls (2 failures + 1 success), got %d", callCount)
+	}
+}
+
+func TestHTTPClient_ExhaustsAllRetries(t *testing.T) {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := &HTTPRetailPricesClient{
+		client:     srv.Client(),
+		baseURL:    srv.URL,
+		retryDelay: time.Millisecond,
+	}
+
+	_, err := client.GetVMPrices(context.Background(), "eastus", []string{"Linux"})
+	if err == nil {
+		t.Fatal("expected error after exhausting all retries")
+	}
+	if callCount != 3 {
+		t.Errorf("expected exactly 3 attempts (maxRetries), got %d", callCount)
+	}
+}
+
 func TestHTTPClient_FiltersNonHourly(t *testing.T) {
 	resp := RetailPriceResponse{
 		Items: []RetailPriceItem{
