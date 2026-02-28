@@ -124,7 +124,7 @@ func TestValidateSavingPlanTypes(t *testing.T) {
 		{name: "Compute", input: "Compute"},
 		{name: "EC2Instance", input: "EC2Instance"},
 		{name: "SageMaker", input: "SageMaker"},
-		{name: "empty string (means none)", input: ""},    // allowed
+		{name: "empty string (means none)", input: ""}, // allowed
 		{name: "invalid", input: "InvalidPlan", wantErr: true},
 		{name: "spot (not a plan type)", input: "spot", wantErr: true},
 	}
