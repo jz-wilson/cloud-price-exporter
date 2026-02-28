@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [master]   # auto patch-bump on every master merge
+    tags: ["v*"]         # manual override for major/minor bumps
 
 jobs:
   release:
@@ -15,14 +15,38 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # required to read git tags for version bump
 
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
-      - name: Run tests before release
+      - name: Run tests
         run: go test -race -count=1 ./...
+
+      # ── Version ───────────────────────────────────────────────────────────
+      # On a manual v* tag push: use that tag as-is.
+      # On a master push: auto-bump the patch component of the latest semver tag.
+      - name: Compute version
+        id: version
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            TAG="${{ github.ref_name }}"
+          else
+            LATEST=$(git tag --sort=-v:refname \
+              | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' \
+              | head -1)
+            if [[ -z "$LATEST" ]]; then LATEST="v0.0.0"; fi
+            MAJOR=$(cut -d. -f1 <<< "${LATEST#v}")
+            MINOR=$(cut -d. -f2 <<< "${LATEST#v}")
+            PATCH=$(cut -d. -f3 <<< "${LATEST#v}")
+            TAG="v${MAJOR}.${MINOR}.$((PATCH + 1))"
+          fi
+          echo "tag=$TAG"             >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}"     >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG"
 
       # ── Docker ────────────────────────────────────────────────────────────
       - name: Docker metadata
@@ -31,9 +55,8 @@ jobs:
         with:
           images: ghcr.io/jz-wilson/cloud-price-exporter
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
+            type=raw,value=${{ steps.version.outputs.version }}
+            type=raw,value=latest
             type=sha
 
       - name: Login to GHCR
@@ -60,17 +83,19 @@ jobs:
 
       - name: Package Helm chart
         run: |
-          VERSION="${{ github.ref_name }}"
-          VERSION="${VERSION#v}"
-          helm package . --version "$VERSION" --app-version "$VERSION"
+          helm package . \
+            --version "${{ steps.version.outputs.version }}" \
+            --app-version "${{ steps.version.outputs.version }}"
 
       - name: Push Helm chart to GHCR (OCI)
-        run: |
-          helm push cloud-price-exporter-*.tgz oci://ghcr.io/jz-wilson
+        run: helm push cloud-price-exporter-*.tgz oci://ghcr.io/jz-wilson
 
       # ── GitHub Release ────────────────────────────────────────────────────
+      # tag_name is explicit so the action creates the git tag when triggered
+      # from a branch push (where no tag exists yet).
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           generate_release_notes: true
           files: cloud-price-exporter-*.tgz
