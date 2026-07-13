@@ -7,7 +7,9 @@
 [![Docker](https://img.shields.io/badge/docker-ghcr.io-blue?logo=docker)](https://github.com/jz-wilson/cloud-price-exporter/pkgs/container/cloud-price-exporter)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Prometheus exporter for cloud VM pricing. Scrapes **AWS EC2** (spot, on-demand, savings plans) and **Azure VM** on-demand pricing, exposing them as Prometheus gauge metrics.
+Engineers and finance teams tracking cloud spend usually have to leave their observability stack and dig through the AWS/Azure billing console or CLI just to see how instance pricing moves. That's a visibility gap between "what's my infra costing" and the dashboards everyone already watches.
+
+Cloud Price Exporter closes that gap by putting AWS and Azure pricing directly into Prometheus as native metrics — no separate tooling, no manual lookups. Scrapes **AWS EC2** (spot, on-demand, savings plans) and **Azure VM** on-demand pricing, exposing them as Prometheus gauge metrics.
 
 ## Credentials Required
 
@@ -95,6 +97,46 @@ helm install cloud-price-exporter \
 # From local chart
 helm install cloud-price-exporter . \
   --set exporter.azure.regions=eastus
+```
+
+## Grafana
+
+There's no bundled dashboard yet (a ready-made Grafana dashboard JSON would be a good follow-up), but every metric below is a plain Prometheus gauge, so it drops straight into existing PromQL panels. A few example queries against the real metric and label names from the [Metrics](#metrics) tables above:
+
+Cheapest on-demand EC2 instance per region:
+
+```promql
+min by (region) (
+  aws_pricing_ec2{instance_lifecycle="ondemand"}
+)
+```
+
+Spot vs. on-demand savings percentage for a given instance type:
+
+```promql
+100 * (
+  1 - (
+    min(aws_pricing_ec2{instance_lifecycle="spot", instance_type="m5.large"})
+    /
+    min(aws_pricing_ec2{instance_lifecycle="ondemand", instance_type="m5.large"})
+  )
+)
+```
+
+Cost per vCPU across instance families, cheapest first:
+
+```promql
+sort(aws_pricing_ec2_vcpu{instance_lifecycle="ondemand", region="us-east-1"})
+```
+
+AWS vs. Azure price comparison for equivalent instance types (e.g. `m5.large` vs. `Standard_D2s_v3`) — run as two queries in the same table/time-series panel so they render side by side:
+
+```promql
+aws_pricing_ec2{instance_type="m5.large", instance_lifecycle="ondemand", region="us-east-1"}
+```
+
+```promql
+azure_pricing_vm{instance_type="Standard_D2s_v3", region="eastus"}
 ```
 
 ## CLI Flags
@@ -300,6 +342,8 @@ go test -tags integration -v ./exporter/
 # Coverage
 go test -cover ./...
 ```
+
+The unit test suite is fully mock-based — mock AWS and Azure API clients are substituted via the client factory pattern described in [Architecture](#architecture), so `go test ./...` runs entirely offline with no credentials, network access, or live API calls required.
 
 ### Build
 
